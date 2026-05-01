@@ -490,9 +490,9 @@
       }
       #${ROOT_ID} .ksso-comment-section {
         border: 1px solid #eef2f7;
-        border-radius: 6px;
+        border-radius: 8px;
         margin-top: 8px;
-        padding: 10px 12px;
+        padding: 10px 12px 12px;
         background: #ffffff;
       }
       #${ROOT_ID} .ksso-comment-positive {
@@ -508,7 +508,7 @@
         display: flex;
         align-items: center;
         gap: 7px;
-        margin: 0 0 6px;
+        margin: 0 0 8px;
         color: #1f2937;
         font-size: 14px;
         line-height: 1.45;
@@ -535,55 +535,44 @@
       }
       #${ROOT_ID} .ksso-comment-bubbles {
         display: grid;
-        gap: 8px;
+        gap: 10px;
         margin: 0;
       }
       #${ROOT_ID} .ksso-comment-bubble {
-        position: relative;
         width: fit-content;
         max-width: min(100%, 78ch);
         margin: 0;
         border: 1px solid #e2e8f0;
+        border-left-width: 4px;
         border-radius: 12px;
-        padding: 9px 12px;
+        padding: 10px 14px;
         background: #f8fafc;
         color: #1f2937;
         font-size: 15px;
         font-weight: 600;
-        line-height: 1.6;
+        line-height: 1.65;
+        white-space: pre-wrap;
+        word-break: break-word;
+        box-sizing: border-box;
       }
-      #${ROOT_ID} .ksso-comment-bubble::before {
-        content: "";
-        position: absolute;
-        left: 14px;
-        bottom: -7px;
-        width: 12px;
-        height: 12px;
-        border-right: 1px solid #e2e8f0;
-        border-bottom: 1px solid #e2e8f0;
-        background: inherit;
-        transform: rotate(45deg);
+      #${ROOT_ID} .ksso-comment-bubble::before,
+      #${ROOT_ID} .ksso-comment-bubble::after {
+        content: none;
       }
       #${ROOT_ID} .ksso-comment-positive .ksso-comment-bubble {
         border-color: #bbf7d0;
+        border-left-color: #22c55e;
         background: #f0fdf4;
       }
       #${ROOT_ID} .ksso-comment-improvement .ksso-comment-bubble {
         border-color: #fed7aa;
+        border-left-color: #f97316;
         background: #fff7ed;
       }
       #${ROOT_ID} .ksso-comment-other .ksso-comment-bubble {
         border-color: #bfdbfe;
+        border-left-color: #3b82f6;
         background: #eff6ff;
-      }
-      #${ROOT_ID} .ksso-comment-positive .ksso-comment-bubble::before {
-        border-color: #bbf7d0;
-      }
-      #${ROOT_ID} .ksso-comment-improvement .ksso-comment-bubble::before {
-        border-color: #fed7aa;
-      }
-      #${ROOT_ID} .ksso-comment-other .ksso-comment-bubble::before {
-        border-color: #bfdbfe;
       }
       @media (max-width: 720px) {
         #${ROOT_ID} .ksso-summary,
