@@ -2,6 +2,10 @@
 
 慶應義塾大学のシラバス・履修登録・K-Support / K-LMS と連動し、授業評価・学生レビュー・改善要望を見やすくするためのブラウザ拡張機能です。
 
+## Screenshot
+
+![Keio Syllabus Survey Overlay screenshot](https://i.gyazo.com/a70798ee3b6396ffe96282d01beb6ed7.png)
+
 ## 背景
 
 慶應には授業評価アンケートの仕組みがありますが、履修登録やシラバス確認のタイミングで、過去の授業評価結果や履修者の実感に自然にアクセスしづらいという課題があります。
