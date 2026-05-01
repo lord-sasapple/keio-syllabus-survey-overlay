@@ -18,19 +18,18 @@
   "content_scripts": [
     {
       "matches": ["https://keiouniversity.my.site.com/students/*"],
-      "js": [
-        "src/shared.js",
-        "src/probe-bridge.js",
-        "src/ksupport-content.js"
-      ],
+      "js": ["src/shared.js", "src/probe-bridge.js", "src/ksupport-content.js"],
       "run_at": "document_start"
     },
     {
-      "matches": [
-        "https://gslbs.keio.jp/pub-syllabus/*",
-        "https://gslbs.keio.jp/syllabus/*"
-      ],
+      "matches": ["https://gslbs.keio.jp/pub-syllabus/*", "https://gslbs.keio.jp/syllabus/*"],
+      "exclude_matches": ["https://gslbs.keio.jp/pub-syllabus/result*", "https://gslbs.keio.jp/syllabus/result*"],
       "js": ["src/shared.js", "src/syllabus-content.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://gslbs.keio.jp/pub-syllabus/result*", "https://gslbs.keio.jp/syllabus/result*"],
+      "js": ["src/shared.js", "src/syllabus-result-content.js"],
       "run_at": "document_idle"
     }
   ],
