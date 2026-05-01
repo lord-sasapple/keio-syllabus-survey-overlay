@@ -10,10 +10,11 @@
 
   const STYLE_ID = "keio-survey-result-overlay-style";
   const ITEM_SELECTOR = ".search-result-item";
-  const AUTO_FETCH_LIMIT = 8;
   const AUTO_FETCH_CONCURRENCY = 2;
   const autoFetchSeen = new Set();
+  const observedItems = new WeakSet();
   let activeFetches = 0;
+  let intersectionObserver = null;
   const fetchQueue = [];
 
   function runtimeMessage(message) {
@@ -269,6 +270,7 @@
   async function fetchAndRender(course, item, force = false) {
     if (!force && item.dataset.kssoFetched === "1") return;
     item.dataset.kssoFetched = "1";
+    item.dataset.kssoQueued = "";
     insertBadge(item, renderStatusBadge("取得中...", "ksso-result-badge--loading"));
 
     const response = await runtimeMessage({ type: "keioSurvey.fetchEvaluationForSyllabus", syllabus: course });
@@ -307,10 +309,35 @@
 
   function enqueueFetch(course, item, force = false) {
     const key = courseKey(course);
-    if (!force && autoFetchSeen.has(key)) return;
+    if (!force && (autoFetchSeen.has(key) || item.dataset.kssoQueued === "1" || item.dataset.kssoFetched === "1")) return;
     autoFetchSeen.add(key);
+    item.dataset.kssoQueued = "1";
     fetchQueue.push({ course, item, force });
     runQueue();
+  }
+
+  function getIntersectionObserver() {
+    if (intersectionObserver) return intersectionObserver;
+    intersectionObserver = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        const item = entry.target;
+        const course = parseResultItem(item);
+        if (!course.courseName) continue;
+        enqueueFetch(course, item);
+      }
+    }, {
+      root: null,
+      rootMargin: "240px 0px 320px 0px",
+      threshold: 0.01
+    });
+    return intersectionObserver;
+  }
+
+  function observeForAutoFetch(item) {
+    if (observedItems.has(item) || item.dataset.kssoFetched === "1") return;
+    observedItems.add(item);
+    getIntersectionObserver().observe(item);
   }
 
   async function renderResultList() {
@@ -318,7 +345,6 @@
     const current = await storageGet({ [STORAGE_KEYS.evaluations]: {} });
     const evaluations = uniqueEvaluations(objectStore(current[STORAGE_KEYS.evaluations]));
     const items = Array.from(document.querySelectorAll(ITEM_SELECTOR));
-    let autoFetchCount = 0;
 
     for (const item of items) {
       const course = parseResultItem(item);
@@ -328,13 +354,9 @@
         insertBadge(item, renderMatchedBadge(match));
         continue;
       }
-      if (autoFetchCount < AUTO_FETCH_LIMIT) {
-        autoFetchCount += 1;
-        insertBadge(item, renderStatusBadge("取得待ち", "ksso-result-badge--loading"));
-        enqueueFetch(course, item);
-      } else {
-        insertBadge(item, renderStatusBadge("評価未取得", "ksso-result-badge--missing"));
-      }
+      if (item.dataset.kssoFetched === "1" || item.dataset.kssoQueued === "1") continue;
+      insertBadge(item, renderStatusBadge("表示時に自動取得", "ksso-result-badge--missing"));
+      observeForAutoFetch(item);
     }
   }
 
