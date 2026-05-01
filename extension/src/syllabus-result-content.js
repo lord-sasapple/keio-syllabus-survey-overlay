@@ -1,13 +1,20 @@
 (() => {
   const {
     STORAGE_KEYS,
+    compactCourseKey,
     normalizeText,
     scoreCourseMatch,
-    storageGet
+    storageGet,
+    storageSet
   } = window.KeioSurveyShared;
 
   const STYLE_ID = "keio-survey-result-overlay-style";
   const ITEM_SELECTOR = ".search-result-item";
+  const AUTO_FETCH_LIMIT = 8;
+  const AUTO_FETCH_CONCURRENCY = 2;
+  const autoFetchSeen = new Set();
+  let activeFetches = 0;
+  const fetchQueue = [];
 
   function runtimeMessage(message) {
     return new Promise((resolve) => {
@@ -77,6 +84,67 @@
     return best && best.score >= 55 ? best : null;
   }
 
+  function normalizeEvaluation(event) {
+    const course = event.course || {};
+    return {
+      source: "keio-ksupport-ksei",
+      recordId: normalizeText(event.recordId),
+      capturedAt: event.capturedAt || event.at || new Date().toISOString(),
+      course: {
+        recordId: normalizeText(event.recordId || course.recordId),
+        courseName: normalizeText(course.courseName),
+        lecturer: normalizeText(course.lecturer),
+        semester: normalizeText(course.semester),
+        dayPeriod: normalizeText(course.dayPeriod),
+        campus: normalizeText(course.campus),
+        faculty: normalizeText(course.faculty),
+        answerPercent: typeof course.answerPercent === "number" ? course.answerPercent : null
+      },
+      questions: Array.isArray(event.questions)
+        ? event.questions.map((question) => ({
+            index: question.index,
+            ja: normalizeText(question.ja),
+            en: normalizeText(question.en),
+            avg: typeof question.avg === "number" ? question.avg : null,
+            counts: Array.isArray(question.counts) ? question.counts.slice(0, 5).map((count) => Number(count) || 0) : []
+          }))
+        : []
+    };
+  }
+
+  async function saveEvaluation(event) {
+    const evaluation = normalizeEvaluation(event);
+    if (!evaluation.recordId && !evaluation.questions.length) return evaluation;
+
+    const current = await storageGet({
+      [STORAGE_KEYS.courses]: {},
+      [STORAGE_KEYS.evaluations]: {}
+    });
+    const courses = objectStore(current[STORAGE_KEYS.courses]);
+    const evaluations = objectStore(current[STORAGE_KEYS.evaluations]);
+    const key = compactCourseKey(evaluation.course);
+
+    if (evaluation.recordId) {
+      courses[`record:${evaluation.recordId}`] = { ...evaluation.course, recordId: evaluation.recordId };
+      evaluations[`record:${evaluation.recordId}`] = evaluation;
+    }
+    if (key.replace(/\|/g, "")) {
+      courses[`key:${key}`] = { ...evaluation.course, recordId: evaluation.recordId };
+      evaluations[`key:${key}`] = evaluation;
+    }
+
+    await storageSet({
+      [STORAGE_KEYS.courses]: courses,
+      [STORAGE_KEYS.evaluations]: evaluations,
+      [STORAGE_KEYS.lastSeen]: {
+        url: location.href,
+        title: document.title,
+        at: new Date().toISOString()
+      }
+    });
+    return evaluation;
+  }
+
   function formatAvg(value) {
     return typeof value === "number" ? value.toFixed(2) : "-";
   }
@@ -142,6 +210,12 @@
     document.head.appendChild(style);
   }
 
+  function courseKey(course) {
+    return [course.courseName, course.lecturer, course.semester, course.dayPeriod, course.campus, course.faculty]
+      .map((value) => normalizeText(value))
+      .join("|");
+  }
+
   function removeExistingBadge(item) {
     item.querySelector(".ksso-result-badge")?.remove();
   }
@@ -163,27 +237,80 @@
     return badge;
   }
 
-  function renderFetchButton(course, item) {
+  function renderStatusBadge(text, className = "ksso-result-badge--missing", title = "") {
     const badge = document.createElement("span");
-    badge.className = "ksso-result-badge ksso-result-badge--missing";
+    badge.className = `ksso-result-badge ${className}`;
+    badge.textContent = text;
+    if (title) badge.title = title;
+    return badge;
+  }
+
+  function renderRetryBadge(course, item, label = "再取得") {
+    const badge = document.createElement("span");
+    badge.className = "ksso-result-badge ksso-result-badge--error";
     const button = document.createElement("button");
     button.type = "button";
     button.className = "ksso-result-button";
-    button.textContent = "授業評価を取得";
-    button.addEventListener("click", async () => {
-      badge.className = "ksso-result-badge ksso-result-badge--loading";
-      badge.textContent = "取得中...";
-      const response = await runtimeMessage({ type: "keioSurvey.fetchEvaluationForSyllabus", syllabus: course });
-      if (response?.ok && response.evaluation) {
-        insertBadge(item, renderMatchedBadge({ evaluation: response.evaluation, score: response.match?.score ?? scoreCourseMatch(course, response.evaluation.course || {}) }));
-        return;
-      }
-      badge.className = "ksso-result-badge ksso-result-badge--error";
-      badge.textContent = response?.code === "NO_MATCH" ? "評価なし" : "取得失敗";
-      badge.title = response?.message || response?.code || "授業評価の取得に失敗しました";
-    });
+    button.textContent = label;
+    button.addEventListener("click", () => enqueueFetch(course, item, true));
     badge.appendChild(button);
     return badge;
+  }
+
+  function isKSupportAuthError(response) {
+    const code = response?.code || "";
+    return code === "KSUPPORT_TAB_NOT_FOUND"
+      || code === "KSUPPORT_CONTEXT_MISSING"
+      || code === "KSUPPORT_CONTEXT_EXPIRED"
+      || code === "KSUPPORT_TABS_UNAVAILABLE"
+      || code === "TAB_MESSAGE_FAILED";
+  }
+
+  async function fetchAndRender(course, item, force = false) {
+    if (!force && item.dataset.kssoFetched === "1") return;
+    item.dataset.kssoFetched = "1";
+    insertBadge(item, renderStatusBadge("取得中...", "ksso-result-badge--loading"));
+
+    const response = await runtimeMessage({ type: "keioSurvey.fetchEvaluationForSyllabus", syllabus: course });
+    if (response?.ok && response.evaluation) {
+      const evaluation = await saveEvaluation(response.evaluation);
+      insertBadge(item, renderMatchedBadge({
+        evaluation,
+        score: response.match?.score ?? scoreCourseMatch(course, response.evaluation.course || {})
+      }));
+      return;
+    }
+    if (response?.code === "NO_MATCH") {
+      insertBadge(item, renderStatusBadge("評価なし", "ksso-result-badge--missing"));
+      return;
+    }
+    if (isKSupportAuthError(response)) {
+      item.dataset.kssoFetched = "";
+      insertBadge(item, renderRetryBadge(course, item, "K-Supportログイン後に再取得"));
+      return;
+    }
+    item.dataset.kssoFetched = "";
+    insertBadge(item, renderRetryBadge(course, item, "取得失敗 / 再取得"));
+  }
+
+  function runQueue() {
+    while (activeFetches < AUTO_FETCH_CONCURRENCY && fetchQueue.length) {
+      const job = fetchQueue.shift();
+      activeFetches += 1;
+      fetchAndRender(job.course, job.item, job.force)
+        .finally(() => {
+          activeFetches -= 1;
+          runQueue();
+        });
+    }
+  }
+
+  function enqueueFetch(course, item, force = false) {
+    const key = courseKey(course);
+    if (!force && autoFetchSeen.has(key)) return;
+    autoFetchSeen.add(key);
+    fetchQueue.push({ course, item, force });
+    runQueue();
   }
 
   async function renderResultList() {
@@ -191,11 +318,23 @@
     const current = await storageGet({ [STORAGE_KEYS.evaluations]: {} });
     const evaluations = uniqueEvaluations(objectStore(current[STORAGE_KEYS.evaluations]));
     const items = Array.from(document.querySelectorAll(ITEM_SELECTOR));
+    let autoFetchCount = 0;
+
     for (const item of items) {
       const course = parseResultItem(item);
       if (!course.courseName) continue;
       const match = findBestEvaluation(course, evaluations);
-      insertBadge(item, match ? renderMatchedBadge(match) : renderFetchButton(course, item));
+      if (match) {
+        insertBadge(item, renderMatchedBadge(match));
+        continue;
+      }
+      if (autoFetchCount < AUTO_FETCH_LIMIT) {
+        autoFetchCount += 1;
+        insertBadge(item, renderStatusBadge("取得待ち", "ksso-result-badge--loading"));
+        enqueueFetch(course, item);
+      } else {
+        insertBadge(item, renderStatusBadge("評価未取得", "ksso-result-badge--missing"));
+      }
     }
   }
 
