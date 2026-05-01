@@ -1,0 +1,43 @@
+{
+  "manifest_version": 3,
+  "name": "Keio Syllabus Survey Overlay",
+  "version": "0.1.0",
+  "description": "Shows K-Support class evaluation summaries on Keio syllabus pages.",
+  "permissions": ["storage", "tabs"],
+  "host_permissions": [
+    "https://gslbs.keio.jp/*",
+    "https://keiouniversity.my.site.com/*"
+  ],
+  "action": {
+    "default_title": "Keio Survey Overlay",
+    "default_popup": "popup/popup.html"
+  },
+  "background": {
+    "service_worker": "background/service-worker.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://keiouniversity.my.site.com/students/*"],
+      "js": [
+        "src/shared.js",
+        "src/probe-bridge.js",
+        "src/ksupport-content.js"
+      ],
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://gslbs.keio.jp/pub-syllabus/*",
+        "https://gslbs.keio.jp/syllabus/*"
+      ],
+      "js": ["src/shared.js", "src/syllabus-content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["src/page-probe.js"],
+      "matches": ["https://keiouniversity.my.site.com/*"]
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Keio Survey Overlay</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <main>
+      <h1>Keio Survey Overlay</h1>
+      <dl>
+        <div>
+          <dt>保存済み科目</dt>
+          <dd id="course-count">-</dd>
+        </div>
+        <div>
+          <dt>保存済み評価</dt>
+          <dd id="evaluation-count">-</dd>
+        </div>
+        <div>
+          <dt>最終取得</dt>
+          <dd id="last-seen">-</dd>
+        </div>
+        <div>
+          <dt>K-Support</dt>
+          <dd id="ksupport-status">-</dd>
+        </div>
+      </dl>
+      <p>K-Support の授業評価画面を開くと、集計値だけをこの端末に保存します。</p>
+      <button id="open-ksupport" type="button">K-Supportを開く</button>
+    </main>
+    <script src="../src/shared.js"></script>
+    <script src="popup.js"></script>
+  </body>
+</html>
