@@ -1,6 +1,9 @@
 (() => {
   const {
     STORAGE_KEYS,
+    cachePut,
+    cachePutMany,
+    cacheSetMeta,
     compactCourseKey,
     normalizeText,
     storageGet,
@@ -10,7 +13,8 @@
   const SOURCE = "keio-survey-page-probe";
   const COMMAND_SOURCE = "keio-survey-content-command";
   const RESPONSE_SOURCE = "keio-survey-page-response";
-  const COMMAND_TIMEOUT_MS = 45000;
+  const COMMAND_TIMEOUT_MS = 2 * 60 * 60 * 1000;
+  let syncPromise = null;
 
   function objectStore(value) {
     return value && typeof value === "object" && !Array.isArray(value) ? value : {};
@@ -46,7 +50,17 @@
       recordId: normalizeText(event.recordId || course.recordId),
       capturedAt: event.at || new Date().toISOString(),
       course,
-      questions
+      questions,
+      commentSections: Array.isArray(event.commentSections)
+        ? event.commentSections.map((section) => ({
+            kind: normalizeText(section.kind),
+            title: normalizeText(section.title),
+            en: normalizeText(section.en),
+            comments: Array.isArray(section.comments)
+              ? section.comments.map((comment) => normalizeText(comment)).filter(Boolean)
+              : []
+          })).filter((section) => section.comments.length)
+        : []
     };
   }
 
@@ -61,6 +75,7 @@
       if (course.recordId) store[`record:${course.recordId}`] = course;
       if (key.replace(/\|/g, "")) store[`key:${key}`] = course;
     }
+    await cachePutMany("courses", courses.map(normalizeCourse));
 
     await storageSet({
       [STORAGE_KEYS.courses]: store,
@@ -75,6 +90,10 @@
   async function saveEvaluation(event) {
     const evaluation = normalizeEvaluation(event);
     if (!evaluation.recordId && !evaluation.questions.length) return;
+    const storageEvaluation = {
+      ...evaluation,
+      commentSections: []
+    };
 
     const current = await storageGet({
       [STORAGE_KEYS.courses]: {},
@@ -89,15 +108,17 @@
         ...evaluation.course,
         recordId: evaluation.recordId
       };
-      evaluations[`record:${evaluation.recordId}`] = evaluation;
+      evaluations[`record:${evaluation.recordId}`] = storageEvaluation;
     }
     if (key.replace(/\|/g, "")) {
       courses[`key:${key}`] = {
         ...evaluation.course,
         recordId: evaluation.recordId
       };
-      evaluations[`key:${key}`] = evaluation;
+      evaluations[`key:${key}`] = storageEvaluation;
     }
+    await cachePut("evaluations", evaluation);
+    if (evaluation.course?.recordId) await cachePut("courses", evaluation.course);
 
     await storageSet({
       [STORAGE_KEYS.courses]: courses,
@@ -107,6 +128,13 @@
         title: document.title,
         at: new Date().toISOString()
       }
+    });
+  }
+
+  async function saveSyncProgress(event) {
+    await cacheSetMeta("lastSyncProgress", {
+      ...event,
+      updatedAt: event.at || new Date().toISOString()
     });
   }
 
@@ -152,6 +180,54 @@
       return response;
     }
 
+    if (message?.type === "keioSurvey.syncAllEvaluations") {
+      if (syncPromise) return { ok: true, started: false, message: "K-Support sync already running." };
+      await cacheSetMeta("lastSyncProgress", {
+        state: "running",
+        phaseName: "starting",
+        message: "同期を開始しています。",
+        startedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        searchExpectedTotal: null,
+        searchFoundRaw: 0,
+        searchFoundUnique: 0,
+        segmentsDone: 0,
+        cappedSegmentsCount: 0,
+        detailTotal: null,
+        detailFetched: 0,
+        detailFailed: 0
+      });
+      syncPromise = pageCommand("syncAllEvaluations", message.options || {})
+        .then(async (response) => {
+          await cacheSetMeta("lastSyncAllEvaluations", {
+            ...response,
+            finishedAt: new Date().toISOString()
+          });
+          await cacheSetMeta("lastSyncProgress", {
+            state: response?.ok ? (response.failed ? "complete_with_errors" : "complete") : "failed",
+            phaseName: response?.ok ? "complete" : "failed",
+            message: response?.ok ? "同期が完了しました。" : (response?.message || "同期に失敗しました。"),
+            startedAt: response?.startedAt || null,
+            updatedAt: new Date().toISOString(),
+            searchExpectedTotal: response?.searchExpectedTotal ?? null,
+            searchFoundRaw: response?.rawCourseCount ?? 0,
+            searchFoundUnique: response?.courseCount ?? 0,
+            segmentsDone: Array.isArray(response?.searchedSegments) ? response.searchedSegments.length : 0,
+            cappedSegmentsCount: Array.isArray(response?.cappedSegments) ? response.cappedSegments.length : 0,
+            coverageComplete: Boolean(response?.coverageComplete),
+            detailTotal: response?.courseCount ?? null,
+            detailFetched: response?.fetched ?? 0,
+            detailFailed: response?.failed ?? 0
+          });
+          return response;
+        })
+        .finally(() => {
+          syncPromise = null;
+        });
+      void syncPromise;
+      return { ok: true, started: true };
+    }
+
     if (message?.type === "keioSurvey.ksupportStatus") {
       return pageCommand("status");
     }
@@ -167,6 +243,9 @@
 
     if (data.event.kind === "ksupport.searchCourses") {
       void saveCourses(data.event.courses);
+    }
+    if (data.event.kind === "ksupport.syncProgress") {
+      void saveSyncProgress(data.event);
     }
     if (data.event.kind === "ksupport.evaluationAggregate") {
       void saveEvaluation(data.event);

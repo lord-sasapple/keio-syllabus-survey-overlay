@@ -1,6 +1,8 @@
 (() => {
   const {
     STORAGE_KEYS,
+    cacheGetAll,
+    cachePut,
     compactCourseKey,
     normalizeText,
     scoreCourseMatch,
@@ -142,8 +144,12 @@
   }
 
   async function saveEvaluation(event) {
-    const evaluation = normalizeEvaluation(event, { includeComments: false });
+    const evaluation = normalizeEvaluation(event, { includeComments: true });
     if (!evaluation.recordId && !evaluation.questions.length) return;
+    const storageEvaluation = {
+      ...evaluation,
+      commentSections: []
+    };
     const current = await storageGet({
       [STORAGE_KEYS.courses]: {},
       [STORAGE_KEYS.evaluations]: {}
@@ -157,15 +163,17 @@
         ...evaluation.course,
         recordId: evaluation.recordId
       };
-      evaluations[`record:${evaluation.recordId}`] = evaluation;
+      evaluations[`record:${evaluation.recordId}`] = storageEvaluation;
     }
     if (key.replace(/\|/g, "")) {
       courses[`key:${key}`] = {
         ...evaluation.course,
         recordId: evaluation.recordId
       };
-      evaluations[`key:${key}`] = evaluation;
+      evaluations[`key:${key}`] = storageEvaluation;
     }
+    await cachePut("evaluations", evaluation);
+    if (evaluation.course?.recordId) await cachePut("courses", evaluation.course);
 
     await storageSet({
       [STORAGE_KEYS.courses]: courses,
@@ -761,7 +769,11 @@
     bindActions(syllabus);
 
     const current = await storageGet({ [STORAGE_KEYS.evaluations]: {} });
-    const match = findBestEvaluation(syllabus, uniqueEvaluations(current[STORAGE_KEYS.evaluations]));
+    const cachedEvaluations = await cacheGetAll("evaluations").catch(() => []);
+    const match = findBestEvaluation(syllabus, [
+      ...cachedEvaluations,
+      ...uniqueEvaluations(current[STORAGE_KEYS.evaluations])
+    ]);
     if (match) {
       renderOverlay(match);
     } else {

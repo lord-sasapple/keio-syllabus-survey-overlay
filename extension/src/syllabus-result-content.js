@@ -1,6 +1,9 @@
 (() => {
   const {
     STORAGE_KEYS,
+    cacheGetAll,
+    cacheGetMeta,
+    cachePut,
     compactCourseKey,
     normalizeText,
     scoreCourseMatch,
@@ -16,6 +19,9 @@
   let activeFetches = 0;
   let intersectionObserver = null;
   const fetchQueue = [];
+  let syncRequested = false;
+  let syncPollingTimer = 0;
+  const SYNC_TTL_MS = 24 * 60 * 60 * 1000;
 
   function runtimeMessage(message) {
     return new Promise((resolve) => {
@@ -109,6 +115,16 @@
             avg: typeof question.avg === "number" ? question.avg : null,
             counts: Array.isArray(question.counts) ? question.counts.slice(0, 5).map((count) => Number(count) || 0) : []
           }))
+        : [],
+      commentSections: Array.isArray(event.commentSections)
+        ? event.commentSections.map((section) => ({
+            kind: normalizeText(section.kind),
+            title: normalizeText(section.title),
+            en: normalizeText(section.en),
+            comments: Array.isArray(section.comments)
+              ? section.comments.map((comment) => normalizeText(comment)).filter(Boolean)
+              : []
+          })).filter((section) => section.comments.length)
         : []
     };
   }
@@ -116,6 +132,10 @@
   async function saveEvaluation(event) {
     const evaluation = normalizeEvaluation(event);
     if (!evaluation.recordId && !evaluation.questions.length) return evaluation;
+    const storageEvaluation = {
+      ...evaluation,
+      commentSections: []
+    };
 
     const current = await storageGet({
       [STORAGE_KEYS.courses]: {},
@@ -127,12 +147,14 @@
 
     if (evaluation.recordId) {
       courses[`record:${evaluation.recordId}`] = { ...evaluation.course, recordId: evaluation.recordId };
-      evaluations[`record:${evaluation.recordId}`] = evaluation;
+      evaluations[`record:${evaluation.recordId}`] = storageEvaluation;
     }
     if (key.replace(/\|/g, "")) {
       courses[`key:${key}`] = { ...evaluation.course, recordId: evaluation.recordId };
-      evaluations[`key:${key}`] = evaluation;
+      evaluations[`key:${key}`] = storageEvaluation;
     }
+    await cachePut("evaluations", evaluation);
+    if (evaluation.course?.recordId) await cachePut("courses", evaluation.course);
 
     await storageSet({
       [STORAGE_KEYS.courses]: courses,
@@ -267,6 +289,35 @@
       || code === "TAB_MESSAGE_FAILED";
   }
 
+  function syncIsFresh(meta) {
+    const finishedAt = Date.parse(meta?.value?.finishedAt || "");
+    return Number.isFinite(finishedAt) && Date.now() - finishedAt < SYNC_TTL_MS;
+  }
+
+  async function requestCacheSync(items) {
+    if (syncRequested) return;
+    const meta = await cacheGetMeta("lastSyncAllEvaluations").catch(() => null);
+    if (syncIsFresh(meta)) return;
+    syncRequested = true;
+    runtimeMessage({
+      type: "keioSurvey.syncAllEvaluations",
+      options: { includeComments: true }
+    }).then((response) => {
+      if (!response?.ok) {
+        for (const item of items) {
+          const course = parseResultItem(item);
+          insertBadge(item, renderRetryBadge(course, item, "K-Supportログイン後に同期"));
+        }
+        return;
+      }
+      syncPollingTimer = window.setInterval(() => void renderResultList(), 5000);
+      window.setTimeout(() => {
+        window.clearInterval(syncPollingTimer);
+        syncPollingTimer = 0;
+      }, 30 * 60 * 1000);
+    });
+  }
+
   async function fetchAndRender(course, item, force = false) {
     if (!force && item.dataset.kssoFetched === "1") return;
     item.dataset.kssoFetched = "1";
@@ -343,8 +394,13 @@
   async function renderResultList() {
     ensureStyle();
     const current = await storageGet({ [STORAGE_KEYS.evaluations]: {} });
-    const evaluations = uniqueEvaluations(objectStore(current[STORAGE_KEYS.evaluations]));
+    const cachedEvaluations = await cacheGetAll("evaluations").catch(() => []);
+    const evaluations = [
+      ...cachedEvaluations,
+      ...uniqueEvaluations(objectStore(current[STORAGE_KEYS.evaluations]))
+    ];
     const items = Array.from(document.querySelectorAll(ITEM_SELECTOR));
+    if (items.length) void requestCacheSync(items);
 
     for (const item of items) {
       const course = parseResultItem(item);
@@ -355,8 +411,7 @@
         continue;
       }
       if (item.dataset.kssoFetched === "1" || item.dataset.kssoQueued === "1") continue;
-      insertBadge(item, renderStatusBadge("表示時に自動取得", "ksso-result-badge--missing"));
-      observeForAutoFetch(item);
+      insertBadge(item, renderStatusBadge(syncRequested ? "評価キャッシュ同期中" : "評価未同期", "ksso-result-badge--missing"));
     }
   }
 

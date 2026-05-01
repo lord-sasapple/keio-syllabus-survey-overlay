@@ -71,6 +71,38 @@ async function fetchViaKSupportTab(syllabus) {
   };
 }
 
+async function syncAllViaKSupportTab(options = {}) {
+  const tabs = await ksupportTabs();
+  if (!tabs.length) {
+    return {
+      ok: false,
+      code: "KSUPPORT_TAB_NOT_FOUND",
+      message: "ログイン済みの K-Support タブが見つかりません。"
+    };
+  }
+  const failures = [];
+  for (const tab of tabs) {
+    const response = await sendTabMessage(tab.id, {
+      type: "keioSurvey.syncAllEvaluations",
+      options
+    });
+    if (response?.ok) return { ...response, ksupportTabId: tab.id };
+    failures.push({
+      tabId: tab.id,
+      title: tab.title,
+      url: tab.url,
+      code: response?.code,
+      message: response?.message
+    });
+  }
+  return {
+    ok: false,
+    code: failures[0]?.code || "KSUPPORT_TABS_UNAVAILABLE",
+    message: failures[0]?.message || "K-Support タブへ接続できませんでした。",
+    failures
+  };
+}
+
 async function ksupportStatus() {
   const tabs = await ksupportTabs();
   const statuses = [];
@@ -96,6 +128,17 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       .catch((error) => sendResponse({
         ok: false,
         code: "BACKGROUND_FETCH_ERROR",
+        message: String(error?.message || error).slice(0, 500)
+      }));
+    return true;
+  }
+
+  if (message?.type === "keioSurvey.syncAllEvaluations") {
+    syncAllViaKSupportTab(message.options || {})
+      .then(sendResponse)
+      .catch((error) => sendResponse({
+        ok: false,
+        code: "BACKGROUND_SYNC_ERROR",
         message: String(error?.message || error).slice(0, 500)
       }));
     return true;

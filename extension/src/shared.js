@@ -6,6 +6,8 @@
     settings: "keioSurvey.settings",
     lastSeen: "keioSurvey.lastSeen"
   };
+  const DB_NAME = "keioSurveyCache";
+  const DB_VERSION = 1;
 
   const DAY_MAP = {
     月: "月",
@@ -79,6 +81,81 @@
     return chrome.storage.local.set(values);
   }
 
+  function dbOpen() {
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open(DB_NAME, DB_VERSION);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains("courses")) db.createObjectStore("courses", { keyPath: "recordId" });
+        if (!db.objectStoreNames.contains("evaluations")) db.createObjectStore("evaluations", { keyPath: "recordId" });
+        if (!db.objectStoreNames.contains("meta")) db.createObjectStore("meta", { keyPath: "key" });
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  async function dbStore(mode, storeName, callback) {
+    const db = await dbOpen();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(storeName, mode);
+      const store = tx.objectStore(storeName);
+      let result;
+      try {
+        result = callback(store);
+      } catch (error) {
+        reject(error);
+        return;
+      }
+      tx.oncomplete = () => resolve(result);
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    }).finally(() => db.close());
+  }
+
+  function dbRequest(request) {
+    return new Promise((resolve, reject) => {
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  async function cachePut(storeName, value) {
+    if (!value?.recordId && storeName !== "meta") return;
+    await dbStore("readwrite", storeName, (store) => store.put(value));
+  }
+
+  async function cachePutMany(storeName, values) {
+    const clean = Array.isArray(values) ? values.filter((value) => value?.recordId || storeName === "meta") : [];
+    if (!clean.length) return;
+    await dbStore("readwrite", storeName, (store) => {
+      for (const value of clean) store.put(value);
+    });
+  }
+
+  async function cacheGetAll(storeName) {
+    const db = await dbOpen();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(storeName, "readonly");
+      const request = tx.objectStore(storeName).getAll();
+      request.onsuccess = () => resolve(request.result || []);
+      request.onerror = () => reject(request.error);
+      tx.oncomplete = () => db.close();
+      tx.onerror = () => {
+        db.close();
+        reject(tx.error);
+      };
+    });
+  }
+
+  async function cacheSetMeta(key, value) {
+    await dbStore("readwrite", "meta", (store) => store.put({ key, value, updatedAt: new Date().toISOString() }));
+  }
+
+  async function cacheGetMeta(key) {
+    return dbStore("readonly", "meta", (store) => dbRequest(store.get(key)));
+  }
+
   function debounce(fn, delay) {
     let timer = 0;
     return (...args) => {
@@ -95,6 +172,11 @@
     normalizePerson,
     normalizeSemester,
     normalizeText,
+    cacheGetAll,
+    cacheGetMeta,
+    cachePut,
+    cachePutMany,
+    cacheSetMeta,
     scoreCourseMatch,
     storageGet,
     storageSet,
