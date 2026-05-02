@@ -132,10 +132,21 @@
   }
 
   async function saveSyncProgress(event) {
-    await cacheSetMeta("lastSyncProgress", {
+    const value = {
       ...event,
       updatedAt: event.at || new Date().toISOString()
-    });
+    };
+    await cacheSetMeta("lastSyncProgress", value);
+    await storageSet({ [STORAGE_KEYS.lastSyncProgress]: value });
+  }
+
+  async function saveSyncResult(event) {
+    const value = {
+      ...event,
+      finishedAt: event.finishedAt || event.at || new Date().toISOString()
+    };
+    await cacheSetMeta("lastSyncAllEvaluations", value);
+    await storageSet({ [STORAGE_KEYS.lastSyncAllEvaluations]: value });
   }
 
   function pageCommand(command, payload = {}) {
@@ -182,12 +193,11 @@
 
     if (message?.type === "keioSurvey.syncAllEvaluations") {
       if (syncPromise) return { ok: true, started: false, message: "K-Support sync already running." };
-      await cacheSetMeta("lastSyncProgress", {
+      await saveSyncProgress({
         state: "running",
         phaseName: "starting",
         message: "同期を開始しています。",
         startedAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
         searchExpectedTotal: null,
         searchFoundRaw: 0,
         searchFoundUnique: 0,
@@ -199,16 +209,15 @@
       });
       syncPromise = pageCommand("syncAllEvaluations", message.options || {})
         .then(async (response) => {
-          await cacheSetMeta("lastSyncAllEvaluations", {
+          await saveSyncResult({
             ...response,
             finishedAt: new Date().toISOString()
           });
-          await cacheSetMeta("lastSyncProgress", {
+          await saveSyncProgress({
             state: response?.ok ? (response.failed ? "complete_with_errors" : "complete") : "failed",
             phaseName: response?.ok ? "complete" : "failed",
             message: response?.ok ? "同期が完了しました。" : (response?.message || "同期に失敗しました。"),
             startedAt: response?.startedAt || null,
-            updatedAt: new Date().toISOString(),
             searchExpectedTotal: response?.searchExpectedTotal ?? null,
             searchFoundRaw: response?.rawCourseCount ?? 0,
             searchFoundUnique: response?.courseCount ?? 0,
@@ -246,6 +255,9 @@
     }
     if (data.event.kind === "ksupport.syncProgress") {
       void saveSyncProgress(data.event);
+    }
+    if (data.event.kind === "ksupport.syncAllEvaluations") {
+      void saveSyncResult(data.event);
     }
     if (data.event.kind === "ksupport.evaluationAggregate") {
       void saveEvaluation(data.event);

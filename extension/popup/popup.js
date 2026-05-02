@@ -59,6 +59,7 @@
   }
 
   function phaseText(progress) {
+    if (progress?.derivedPartial) return "部分キャッシュ";
     const phaseName = progress?.phaseName;
     if (phaseName === "starting") return "開始中";
     if (phaseName === "searching") return "検索分割中";
@@ -80,7 +81,7 @@
     if (Number.isFinite(expected) && expected > 0 && Number.isFinite(searchFound)) {
       return Math.max(0, Math.min(100, Math.round((searchFound / expected) * 100)));
     }
-    return 0;
+    return null;
   }
 
   function renderProgress(progressMeta, syncMeta) {
@@ -97,28 +98,36 @@
     const bar = document.getElementById("progress-bar");
 
     document.getElementById("progress-stage").textContent = phaseText(progress);
-    document.getElementById("progress-percent").textContent = `${percent}%`;
+    document.getElementById("progress-percent").textContent = percent == null ? "未確認" : `${percent}%`;
     document.getElementById("expected-total").textContent = formatNumber(expected);
     document.getElementById("search-found").textContent = formatNumber(found);
     document.getElementById("detail-progress").textContent = `${formatNumber(detailFetched)} / ${formatNumber(detailTotal)}`;
     document.getElementById("progress-note").textContent = progress.message || (capped ? "まだ 1,500 件上限に当たっている検索条件があります。" : "全件同期を開始すると進捗が表示されます。");
-    bar.style.width = `${percent}%`;
+    bar.style.width = `${percent ?? 0}%`;
     bar.classList.toggle("is-running", progress.state === "running");
     bar.classList.toggle("is-warning", capped > 0 || detailFailed > 0);
+  }
+
+  function storageMeta(value) {
+    return value ? { value } : null;
   }
 
   async function renderCounts() {
     const state = await storageGet({
       [STORAGE_KEYS.courses]: {},
       [STORAGE_KEYS.evaluations]: {},
-      [STORAGE_KEYS.lastSeen]: null
+      [STORAGE_KEYS.lastSeen]: null,
+      [STORAGE_KEYS.lastSyncAllEvaluations]: null,
+      [STORAGE_KEYS.lastSyncProgress]: null
     });
-    const [cachedCourses, cachedEvaluations, syncMeta, progressMeta] = await Promise.all([
+    let [cachedCourses, cachedEvaluations, syncMeta, progressMeta] = await Promise.all([
       cacheGetAll("courses").catch(() => []),
       cacheGetAll("evaluations").catch(() => []),
       cacheGetMeta("lastSyncAllEvaluations").catch(() => null),
       cacheGetMeta("lastSyncProgress").catch(() => null)
     ]);
+    syncMeta ||= storageMeta(state[STORAGE_KEYS.lastSyncAllEvaluations]);
+    progressMeta ||= storageMeta(state[STORAGE_KEYS.lastSyncProgress]);
     const courseCount = Math.max(cachedCourses.length, countValues(state[STORAGE_KEYS.courses]));
     const evaluationCount = Math.max(cachedEvaluations.length, countValues(state[STORAGE_KEYS.evaluations]));
     const commentsCount = cachedEvaluations.filter((evaluation) => commentSectionCount(evaluation) > 0).length;
@@ -126,8 +135,16 @@
     document.getElementById("evaluation-count").textContent = String(evaluationCount);
     document.getElementById("comment-count").textContent = String(commentsCount);
     document.getElementById("last-seen").textContent = formatLastSeen(syncMeta?.value) !== "-" ? formatLastSeen(syncMeta.value) : formatLastSeen(state[STORAGE_KEYS.lastSeen]);
-    document.getElementById("sync-status").textContent = syncStatusText(syncMeta);
-    document.getElementById("sync-count").textContent = syncCountText(syncMeta);
+    document.getElementById("sync-status").textContent = syncMeta?.value ? syncStatusText(syncMeta) : evaluationCount ? "部分保存" : "未同期";
+    document.getElementById("sync-count").textContent = syncMeta?.value ? syncCountText(syncMeta) : evaluationCount ? `${evaluationCount}/-` : "-";
+    if (!progressMeta?.value && (courseCount || evaluationCount)) {
+      progressMeta = storageMeta({
+        derivedPartial: true,
+        message: "保存済みデータはありますが、全件同期のメタ情報がありません。K-Support にログインして同期すると慶應全体の件数と進捗を確認できます。",
+        searchFoundUnique: courseCount || null,
+        detailFetched: evaluationCount || null
+      });
+    }
     renderProgress(progressMeta, syncMeta);
     if (progressMeta?.value?.state === "running" && !progressTimer) {
       progressTimer = setInterval(() => void renderCounts(), 2000);

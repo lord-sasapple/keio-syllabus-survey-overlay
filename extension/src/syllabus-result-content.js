@@ -21,7 +21,7 @@
   const fetchQueue = [];
   let syncRequested = false;
   let syncPollingTimer = 0;
-  const SYNC_TTL_MS = 24 * 60 * 60 * 1000;
+  const SYNC_TTL_MS = 21 * 24 * 60 * 60 * 1000;
 
   function runtimeMessage(message) {
     return new Promise((resolve) => {
@@ -241,10 +241,13 @@
 
   function removeExistingBadge(item) {
     item.querySelector(".ksso-result-badge")?.remove();
+    item.dataset.kssoBadgeKey = "";
   }
 
-  function insertBadge(item, badge) {
+  function insertBadge(item, badge, key = badge.textContent || badge.className) {
+    if (item.dataset.kssoBadgeKey === key) return;
     removeExistingBadge(item);
+    item.dataset.kssoBadgeKey = key;
     const titleRow = item.querySelector(".mb-2") || item;
     const courseName = titleRow.querySelector(".sbjtnm") || titleRow;
     courseName.insertAdjacentElement("afterend", badge);
@@ -322,7 +325,7 @@
     if (!force && item.dataset.kssoFetched === "1") return;
     item.dataset.kssoFetched = "1";
     item.dataset.kssoQueued = "";
-    insertBadge(item, renderStatusBadge("取得中...", "ksso-result-badge--loading"));
+    insertBadge(item, renderStatusBadge("取得中...", "ksso-result-badge--loading"), "loading");
 
     const response = await runtimeMessage({ type: "keioSurvey.fetchEvaluationForSyllabus", syllabus: course });
     if (response?.ok && response.evaluation) {
@@ -330,20 +333,20 @@
       insertBadge(item, renderMatchedBadge({
         evaluation,
         score: response.match?.score ?? scoreCourseMatch(course, response.evaluation.course || {})
-      }));
+      }), `match:${evaluation.recordId || courseKey(course)}:${findOverallQuestion(evaluation)?.avg ?? ""}`);
       return;
     }
     if (response?.code === "NO_MATCH") {
-      insertBadge(item, renderStatusBadge("評価なし", "ksso-result-badge--missing"));
+      insertBadge(item, renderStatusBadge("評価なし", "ksso-result-badge--missing"), `missing:${courseKey(course)}`);
       return;
     }
     if (isKSupportAuthError(response)) {
       item.dataset.kssoFetched = "";
-      insertBadge(item, renderRetryBadge(course, item, "K-Supportログイン後に再取得"));
+      insertBadge(item, renderRetryBadge(course, item, "K-Supportログイン後に再取得"), `auth:${courseKey(course)}`);
       return;
     }
     item.dataset.kssoFetched = "";
-    insertBadge(item, renderRetryBadge(course, item, "取得失敗 / 再取得"));
+    insertBadge(item, renderRetryBadge(course, item, "取得失敗 / 再取得"), `error:${courseKey(course)}`);
   }
 
   function runQueue() {
@@ -400,18 +403,17 @@
       ...uniqueEvaluations(objectStore(current[STORAGE_KEYS.evaluations]))
     ];
     const items = Array.from(document.querySelectorAll(ITEM_SELECTOR));
-    if (items.length) void requestCacheSync(items);
 
     for (const item of items) {
       const course = parseResultItem(item);
       if (!course.courseName) continue;
       const match = findBestEvaluation(course, evaluations);
       if (match) {
-        insertBadge(item, renderMatchedBadge(match));
+        insertBadge(item, renderMatchedBadge(match), `match:${match.evaluation.recordId || courseKey(course)}:${findOverallQuestion(match.evaluation)?.avg ?? ""}`);
         continue;
       }
       if (item.dataset.kssoFetched === "1" || item.dataset.kssoQueued === "1") continue;
-      insertBadge(item, renderStatusBadge(syncRequested ? "評価キャッシュ同期中" : "評価未同期", "ksso-result-badge--missing"));
+      insertBadge(item, renderStatusBadge("保存なし", "ksso-result-badge--missing"), `unsynced:${courseKey(course)}`);
     }
   }
 

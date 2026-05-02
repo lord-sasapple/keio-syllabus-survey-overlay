@@ -4,7 +4,9 @@
     evaluations: "keioSurvey.evaluations",
     networkEvents: "keioSurvey.networkEvents",
     settings: "keioSurvey.settings",
-    lastSeen: "keioSurvey.lastSeen"
+    lastSeen: "keioSurvey.lastSeen",
+    lastSyncAllEvaluations: "keioSurvey.lastSyncAllEvaluations",
+    lastSyncProgress: "keioSurvey.lastSyncProgress"
   };
   const DB_NAME = "keioSurveyCache";
   const DB_VERSION = 1;
@@ -81,6 +83,26 @@
     return chrome.storage.local.set(values);
   }
 
+  function usesExtensionCacheBridge() {
+    return location.protocol !== "chrome-extension:" && Boolean(chrome?.runtime?.id);
+  }
+
+  function cacheMessage(message) {
+    return new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage({ type: "keioSurvey.cache", ...message }, (response) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        if (!response?.ok) {
+          reject(new Error(response?.message || response?.code || "Cache request failed."));
+          return;
+        }
+        resolve(response);
+      });
+    });
+  }
+
   function dbOpen() {
     return new Promise((resolve, reject) => {
       const request = indexedDB.open(DB_NAME, DB_VERSION);
@@ -122,18 +144,30 @@
 
   async function cachePut(storeName, value) {
     if (!value?.recordId && storeName !== "meta") return;
+    if (usesExtensionCacheBridge()) {
+      await cacheMessage({ op: "put", storeName, value });
+      return;
+    }
     await dbStore("readwrite", storeName, (store) => store.put(value));
   }
 
   async function cachePutMany(storeName, values) {
     const clean = Array.isArray(values) ? values.filter((value) => value?.recordId || storeName === "meta") : [];
     if (!clean.length) return;
+    if (usesExtensionCacheBridge()) {
+      await cacheMessage({ op: "putMany", storeName, values: clean });
+      return;
+    }
     await dbStore("readwrite", storeName, (store) => {
       for (const value of clean) store.put(value);
     });
   }
 
   async function cacheGetAll(storeName) {
+    if (usesExtensionCacheBridge()) {
+      const response = await cacheMessage({ op: "getAll", storeName });
+      return response.values || [];
+    }
     const db = await dbOpen();
     return new Promise((resolve, reject) => {
       const tx = db.transaction(storeName, "readonly");
@@ -149,10 +183,18 @@
   }
 
   async function cacheSetMeta(key, value) {
+    if (usesExtensionCacheBridge()) {
+      await cacheMessage({ op: "setMeta", storeName: "meta", key, value });
+      return;
+    }
     await dbStore("readwrite", "meta", (store) => store.put({ key, value, updatedAt: new Date().toISOString() }));
   }
 
   async function cacheGetMeta(key) {
+    if (usesExtensionCacheBridge()) {
+      const response = await cacheMessage({ op: "getMeta", storeName: "meta", key });
+      return response.value || null;
+    }
     return dbStore("readonly", "meta", (store) => dbRequest(store.get(key)));
   }
 
