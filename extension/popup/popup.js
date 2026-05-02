@@ -179,13 +179,13 @@
 
   document.getElementById("sync-all").addEventListener("click", () => {
     const message = document.getElementById("debug-message");
-    message.textContent = "同期を開始しています...";
-    chrome.runtime.sendMessage({ type: "keioSurvey.syncAllEvaluations", options: { includeComments: true } }, (response) => {
+    message.textContent = "集計値の同期を開始しています...";
+    chrome.runtime.sendMessage({ type: "keioSurvey.syncAllEvaluations", options: { includeComments: false } }, (response) => {
       if (chrome.runtime.lastError || !response?.ok) {
         message.textContent = "同期を開始できませんでした。K-Support を開いてログインしてください。";
         return;
       }
-      message.textContent = response.started ? "同期を開始しました。しばらくしてから再度開くと件数が更新されます。" : "同期はすでに実行中です。";
+      message.textContent = response.started ? "集計値の同期を開始しました。自由記述は個別取得時に保存します。" : "同期はすでに実行中です。";
       if (!progressTimer) progressTimer = setInterval(() => void renderCounts(), 2000);
       setTimeout(() => void renderCounts(), 1500);
     });
