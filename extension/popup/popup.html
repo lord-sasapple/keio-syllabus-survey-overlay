@@ -41,7 +41,7 @@
       <section class="progress-panel" aria-label="保存済みデータの状況">
         <div class="progress-head">
           <div>
-            <h2>保存済みデータ</h2>
+            <h2>同期の進み具合</h2>
             <p id="progress-stage">確認中</p>
           </div>
           <strong id="progress-percent">-</strong>
@@ -49,6 +49,20 @@
         <div class="progress-track" aria-hidden="true">
           <div id="progress-bar" class="progress-bar"></div>
         </div>
+        <dl class="progress-grid">
+          <div>
+            <dt>対象授業</dt>
+            <dd id="expected-total">-</dd>
+          </div>
+          <div>
+            <dt>見つけた授業</dt>
+            <dd id="search-found">-</dd>
+          </div>
+          <div>
+            <dt>保存済み</dt>
+            <dd id="detail-progress">- / -</dd>
+          </div>
+        </dl>
         <p id="progress-note" class="progress-note">K-Supportにログインして更新すると、シラバス上で使える評価が保存されます。</p>
         <p id="cache-detail" class="cache-detail">保存済み評価 - 件</p>
       </section>
