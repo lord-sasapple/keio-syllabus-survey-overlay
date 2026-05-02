@@ -141,6 +141,15 @@
     return value ? { value } : null;
   }
 
+  function setText(id, value) {
+    const element = document.getElementById(id);
+    if (!element) {
+      debugLog("missing optional popup element", { id });
+      return;
+    }
+    element.textContent = value;
+  }
+
   function renderReadiness({ evaluationCount, progressMeta, syncMeta, ksupportReady = null }) {
     const progress = progressMeta?.value || {};
     const sync = syncMeta?.value || {};
@@ -213,8 +222,8 @@
     document.getElementById("evaluation-count").textContent = String(evaluationCount);
     document.getElementById("comment-count").textContent = String(commentsCount);
     document.getElementById("last-seen").textContent = formatLastSeen(syncMeta?.value) !== "-" ? formatLastSeen(syncMeta.value) : formatLastSeen(state[STORAGE_KEYS.lastSeen]);
-    document.getElementById("sync-status").textContent = syncMeta?.value ? syncStatusText(syncMeta) : evaluationCount ? "部分保存" : "未同期";
-    document.getElementById("sync-count").textContent = syncMeta?.value ? syncCountText(syncMeta) : evaluationCount ? `${evaluationCount}/-` : "-";
+    setText("sync-status", syncMeta?.value ? syncStatusText(syncMeta) : evaluationCount ? "部分保存" : "未同期");
+    setText("sync-count", syncMeta?.value ? syncCountText(syncMeta) : evaluationCount ? `${evaluationCount}/-` : "-");
     if (!progressMeta?.value && (courseCount || evaluationCount)) {
       progressMeta = storageMeta({
         derivedPartial: true,
