@@ -2,54 +2,38 @@
   const {
     STORAGE_KEYS,
     cacheGetAll,
-    cacheGetMeta,
-    cachePut,
     compactCourseKey,
+    normalizePerson,
+    normalizeSemester,
     normalizeText,
     scoreCourseMatch,
-    storageGet,
-    storageSet
+    storageGet
   } = window.KeioSurveyShared;
 
   const STYLE_ID = "keio-survey-result-overlay-style";
   const ITEM_SELECTOR = ".search-result-item";
-  const AUTO_FETCH_CONCURRENCY = 2;
-  const autoFetchSeen = new Set();
-  const observedItems = new WeakSet();
-  let activeFetches = 0;
-  let intersectionObserver = null;
-  const fetchQueue = [];
-  let syncRequested = false;
-  let syncPollingTimer = 0;
-  const SYNC_TTL_MS = 21 * 24 * 60 * 60 * 1000;
+  const CACHE_REFRESH_MS = 5 * 60 * 1000;
+  const MAX_FALLBACK_CANDIDATES = 40;
 
-  function runtimeMessage(message) {
-    return new Promise((resolve) => {
-      chrome.runtime.sendMessage(message, (response) => {
-        if (chrome.runtime.lastError) {
-          resolve({ ok: false, code: "RUNTIME_MESSAGE_FAILED", message: chrome.runtime.lastError.message });
-          return;
-        }
-        resolve(response || { ok: false, code: "EMPTY_RUNTIME_RESPONSE" });
-      });
-    });
-  }
+  let cacheIndexPromise = null;
+  let cacheIndexLoadedAt = 0;
+  let renderTimer = 0;
 
   function objectStore(value) {
     return value && typeof value === "object" && !Array.isArray(value) ? value : {};
   }
 
-  function uniqueEvaluations(store) {
+  function uniqueByRecordId(values) {
     const seen = new Set();
-    const evaluations = [];
-    for (const value of Object.values(store || {})) {
+    const results = [];
+    for (const value of values || []) {
       if (!value || typeof value !== "object") continue;
       const id = value.recordId || JSON.stringify(value.course || {});
       if (seen.has(id)) continue;
       seen.add(id);
-      evaluations.push(value);
+      results.push(value);
     }
-    return evaluations;
+    return results;
   }
 
   function readDetailMap(item) {
@@ -82,90 +66,83 @@
     };
   }
 
-  function findBestEvaluation(course, evaluations) {
-    let best = null;
+  function courseNameKey(value) {
+    return normalizeText(value);
+  }
+
+  function looseCourseKey(course) {
+    return [
+      normalizeText(course.courseName),
+      normalizePerson(course.lecturer),
+      normalizeSemester(course.semester),
+      normalizeText(course.campus)
+    ].join("|");
+  }
+
+  function addToMapList(map, key, value) {
+    if (!key.replace(/\|/g, "")) return;
+    const list = map.get(key) || [];
+    list.push(value);
+    map.set(key, list);
+  }
+
+  function buildCacheIndex(evaluations) {
+    const exact = new Map();
+    const loose = new Map();
+    const byName = new Map();
+
     for (const evaluation of evaluations) {
+      const course = evaluation.course || {};
+      const exactKey = compactCourseKey(course);
+      if (exactKey.replace(/\|/g, "")) exact.set(exactKey, evaluation);
+      addToMapList(loose, looseCourseKey(course), evaluation);
+      addToMapList(byName, courseNameKey(course.courseName), evaluation);
+    }
+
+    return {
+      exact,
+      loose,
+      byName,
+      count: evaluations.length
+    };
+  }
+
+  async function loadCacheIndex(force = false) {
+    const fresh = cacheIndexPromise && Date.now() - cacheIndexLoadedAt < CACHE_REFRESH_MS;
+    if (!force && fresh) return cacheIndexPromise;
+
+    cacheIndexPromise = Promise.all([
+      cacheGetAll("evaluations").catch(() => []),
+      storageGet({ [STORAGE_KEYS.evaluations]: {} }).catch(() => ({ [STORAGE_KEYS.evaluations]: {} }))
+    ]).then(([cachedEvaluations, storageState]) => {
+      const storageEvaluations = Object.values(objectStore(storageState[STORAGE_KEYS.evaluations]));
+      const evaluations = uniqueByRecordId([...cachedEvaluations, ...storageEvaluations]);
+      cacheIndexLoadedAt = Date.now();
+      return buildCacheIndex(evaluations);
+    });
+    return cacheIndexPromise;
+  }
+
+  function bestFromCandidates(course, candidates) {
+    let best = null;
+    for (const evaluation of candidates.slice(0, MAX_FALLBACK_CANDIDATES)) {
       const score = scoreCourseMatch(course, evaluation.course || {});
       if (!best || score > best.score) best = { evaluation, score };
     }
     return best && best.score >= 55 ? best : null;
   }
 
-  function normalizeEvaluation(event) {
-    const course = event.course || {};
-    return {
-      source: "keio-ksupport-ksei",
-      recordId: normalizeText(event.recordId),
-      capturedAt: event.capturedAt || event.at || new Date().toISOString(),
-      course: {
-        recordId: normalizeText(event.recordId || course.recordId),
-        courseName: normalizeText(course.courseName),
-        lecturer: normalizeText(course.lecturer),
-        semester: normalizeText(course.semester),
-        dayPeriod: normalizeText(course.dayPeriod),
-        campus: normalizeText(course.campus),
-        faculty: normalizeText(course.faculty),
-        answerPercent: typeof course.answerPercent === "number" ? course.answerPercent : null
-      },
-      questions: Array.isArray(event.questions)
-        ? event.questions.map((question) => ({
-            index: question.index,
-            ja: normalizeText(question.ja),
-            en: normalizeText(question.en),
-            avg: typeof question.avg === "number" ? question.avg : null,
-            counts: Array.isArray(question.counts) ? question.counts.slice(0, 5).map((count) => Number(count) || 0) : []
-          }))
-        : [],
-      commentSections: Array.isArray(event.commentSections)
-        ? event.commentSections.map((section) => ({
-            kind: normalizeText(section.kind),
-            title: normalizeText(section.title),
-            en: normalizeText(section.en),
-            comments: Array.isArray(section.comments)
-              ? section.comments.map((comment) => normalizeText(comment)).filter(Boolean)
-              : []
-          })).filter((section) => section.comments.length)
-        : []
-    };
-  }
+  function findBestEvaluation(course, index) {
+    const exact = index.exact.get(compactCourseKey(course));
+    if (exact) return { evaluation: exact, score: 100 };
 
-  async function saveEvaluation(event) {
-    const evaluation = normalizeEvaluation(event);
-    if (!evaluation.recordId && !evaluation.questions.length) return evaluation;
-    const storageEvaluation = {
-      ...evaluation,
-      commentSections: []
-    };
+    const looseCandidates = index.loose.get(looseCourseKey(course));
+    if (looseCandidates?.length) return bestFromCandidates(course, looseCandidates);
 
-    const current = await storageGet({
-      [STORAGE_KEYS.courses]: {},
-      [STORAGE_KEYS.evaluations]: {}
-    });
-    const courses = objectStore(current[STORAGE_KEYS.courses]);
-    const evaluations = objectStore(current[STORAGE_KEYS.evaluations]);
-    const key = compactCourseKey(evaluation.course);
+    const nameCandidates = index.byName.get(courseNameKey(course.courseName));
+    if (nameCandidates?.length) return bestFromCandidates(course, nameCandidates);
 
-    if (evaluation.recordId) {
-      courses[`record:${evaluation.recordId}`] = { ...evaluation.course, recordId: evaluation.recordId };
-      evaluations[`record:${evaluation.recordId}`] = storageEvaluation;
-    }
-    if (key.replace(/\|/g, "")) {
-      courses[`key:${key}`] = { ...evaluation.course, recordId: evaluation.recordId };
-      evaluations[`key:${key}`] = storageEvaluation;
-    }
-    await cachePut("evaluations", evaluation);
-    if (evaluation.course?.recordId) await cachePut("courses", evaluation.course);
-
-    await storageSet({
-      [STORAGE_KEYS.courses]: courses,
-      [STORAGE_KEYS.evaluations]: evaluations,
-      [STORAGE_KEYS.lastSeen]: {
-        url: location.href,
-        title: document.title,
-        at: new Date().toISOString()
-      }
-    });
-    return evaluation;
+    return null;
   }
 
   function formatAvg(value) {
@@ -216,27 +193,8 @@
         background: #fef2f2;
         color: #991b1b;
       }
-      .ksso-result-button {
-        appearance: none;
-        border: 0;
-        padding: 0;
-        background: transparent;
-        color: inherit;
-        font: inherit;
-        font-weight: 700;
-        cursor: pointer;
-      }
-      .ksso-result-button:hover {
-        text-decoration: underline;
-      }
     `;
     document.head.appendChild(style);
-  }
-
-  function courseKey(course) {
-    return [course.courseName, course.lecturer, course.semester, course.dayPeriod, course.campus, course.faculty]
-      .map((value) => normalizeText(value))
-      .join("|");
   }
 
   function removeExistingBadge(item) {
@@ -271,160 +229,49 @@
     return badge;
   }
 
-  function renderRetryBadge(course, item, label = "再取得") {
-    const badge = document.createElement("span");
-    badge.className = "ksso-result-badge ksso-result-badge--error";
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "ksso-result-button";
-    button.textContent = label;
-    button.addEventListener("click", () => enqueueFetch(course, item, true));
-    badge.appendChild(button);
-    return badge;
-  }
-
-  function isKSupportAuthError(response) {
-    const code = response?.code || "";
-    return code === "KSUPPORT_TAB_NOT_FOUND"
-      || code === "KSUPPORT_CONTEXT_MISSING"
-      || code === "KSUPPORT_CONTEXT_EXPIRED"
-      || code === "KSUPPORT_TABS_UNAVAILABLE"
-      || code === "TAB_MESSAGE_FAILED";
-  }
-
-  function syncIsFresh(meta) {
-    const finishedAt = Date.parse(meta?.value?.finishedAt || "");
-    return Number.isFinite(finishedAt) && Date.now() - finishedAt < SYNC_TTL_MS;
-  }
-
-  async function requestCacheSync(items) {
-    if (syncRequested) return;
-    const meta = await cacheGetMeta("lastSyncAllEvaluations").catch(() => null);
-    if (syncIsFresh(meta)) return;
-    syncRequested = true;
-    runtimeMessage({
-      type: "keioSurvey.syncAllEvaluations",
-      options: { includeComments: true }
-    }).then((response) => {
-      if (!response?.ok) {
-        for (const item of items) {
-          const course = parseResultItem(item);
-          insertBadge(item, renderRetryBadge(course, item, "K-Supportログイン後に同期"));
-        }
-        return;
-      }
-      syncPollingTimer = window.setInterval(() => void renderResultList(), 5000);
-      window.setTimeout(() => {
-        window.clearInterval(syncPollingTimer);
-        syncPollingTimer = 0;
-      }, 30 * 60 * 1000);
-    });
-  }
-
-  async function fetchAndRender(course, item, force = false) {
-    if (!force && item.dataset.kssoFetched === "1") return;
-    item.dataset.kssoFetched = "1";
-    item.dataset.kssoQueued = "";
-    insertBadge(item, renderStatusBadge("取得中...", "ksso-result-badge--loading"), "loading");
-
-    const response = await runtimeMessage({ type: "keioSurvey.fetchEvaluationForSyllabus", syllabus: course });
-    if (response?.ok && response.evaluation) {
-      const evaluation = await saveEvaluation(response.evaluation);
-      insertBadge(item, renderMatchedBadge({
-        evaluation,
-        score: response.match?.score ?? scoreCourseMatch(course, response.evaluation.course || {})
-      }), `match:${evaluation.recordId || courseKey(course)}:${findOverallQuestion(evaluation)?.avg ?? ""}`);
-      return;
-    }
-    if (response?.code === "NO_MATCH") {
-      insertBadge(item, renderStatusBadge("評価なし", "ksso-result-badge--missing"), `missing:${courseKey(course)}`);
-      return;
-    }
-    if (isKSupportAuthError(response)) {
-      item.dataset.kssoFetched = "";
-      insertBadge(item, renderRetryBadge(course, item, "K-Supportログイン後に再取得"), `auth:${courseKey(course)}`);
-      return;
-    }
-    item.dataset.kssoFetched = "";
-    insertBadge(item, renderRetryBadge(course, item, "取得失敗 / 再取得"), `error:${courseKey(course)}`);
-  }
-
-  function runQueue() {
-    while (activeFetches < AUTO_FETCH_CONCURRENCY && fetchQueue.length) {
-      const job = fetchQueue.shift();
-      activeFetches += 1;
-      fetchAndRender(job.course, job.item, job.force)
-        .finally(() => {
-          activeFetches -= 1;
-          runQueue();
-        });
-    }
-  }
-
-  function enqueueFetch(course, item, force = false) {
-    const key = courseKey(course);
-    if (!force && (autoFetchSeen.has(key) || item.dataset.kssoQueued === "1" || item.dataset.kssoFetched === "1")) return;
-    autoFetchSeen.add(key);
-    item.dataset.kssoQueued = "1";
-    fetchQueue.push({ course, item, force });
-    runQueue();
-  }
-
-  function getIntersectionObserver() {
-    if (intersectionObserver) return intersectionObserver;
-    intersectionObserver = new IntersectionObserver((entries) => {
-      for (const entry of entries) {
-        if (!entry.isIntersecting) continue;
-        const item = entry.target;
-        const course = parseResultItem(item);
-        if (!course.courseName) continue;
-        enqueueFetch(course, item);
-      }
-    }, {
-      root: null,
-      rootMargin: "240px 0px 320px 0px",
-      threshold: 0.01
-    });
-    return intersectionObserver;
-  }
-
-  function observeForAutoFetch(item) {
-    if (observedItems.has(item) || item.dataset.kssoFetched === "1") return;
-    observedItems.add(item);
-    getIntersectionObserver().observe(item);
-  }
-
-  async function renderResultList() {
+  async function renderResultList(forceReloadCache = false) {
     ensureStyle();
-    const current = await storageGet({ [STORAGE_KEYS.evaluations]: {} });
-    const cachedEvaluations = await cacheGetAll("evaluations").catch(() => []);
-    const evaluations = [
-      ...cachedEvaluations,
-      ...uniqueEvaluations(objectStore(current[STORAGE_KEYS.evaluations]))
-    ];
+    const index = await loadCacheIndex(forceReloadCache);
     const items = Array.from(document.querySelectorAll(ITEM_SELECTOR));
 
     for (const item of items) {
       const course = parseResultItem(item);
       if (!course.courseName) continue;
-      const match = findBestEvaluation(course, evaluations);
+      const match = findBestEvaluation(course, index);
       if (match) {
-        insertBadge(item, renderMatchedBadge(match), `match:${match.evaluation.recordId || courseKey(course)}:${findOverallQuestion(match.evaluation)?.avg ?? ""}`);
-        continue;
+        const overall = findOverallQuestion(match.evaluation);
+        insertBadge(
+          item,
+          renderMatchedBadge(match),
+          `match:${match.evaluation.recordId || compactCourseKey(match.evaluation.course || {})}:${overall?.avg ?? ""}:${match.evaluation.course?.answerPercent ?? ""}`
+        );
+      } else {
+        insertBadge(
+          item,
+          renderStatusBadge("キャッシュなし", "ksso-result-badge--missing", "Popupから集計値を同期すると一覧に表示されます。"),
+          `missing:${compactCourseKey(course)}`
+        );
       }
-      if (item.dataset.kssoFetched === "1" || item.dataset.kssoQueued === "1") continue;
-      insertBadge(item, renderStatusBadge("保存なし", "ksso-result-badge--missing"), `unsynced:${courseKey(course)}`);
     }
+  }
+
+  function scheduleRender(forceReloadCache = false) {
+    window.clearTimeout(renderTimer);
+    renderTimer = window.setTimeout(() => void renderResultList(forceReloadCache), 300);
   }
 
   function main() {
     void renderResultList();
     const target = document.querySelector("#search-result-timetable") || document.body;
-    const observer = new MutationObserver(() => {
-      window.clearTimeout(observer._kssoTimer);
-      observer._kssoTimer = window.setTimeout(() => void renderResultList(), 250);
-    });
+    const observer = new MutationObserver(() => scheduleRender(false));
     observer.observe(target, { childList: true, subtree: true });
+
+    chrome.storage.onChanged.addListener((changes, areaName) => {
+      if (areaName !== "local") return;
+      if (changes[STORAGE_KEYS.evaluations] || changes[STORAGE_KEYS.lastSyncAllEvaluations]) {
+        scheduleRender(true);
+      }
+    });
   }
 
   main();
