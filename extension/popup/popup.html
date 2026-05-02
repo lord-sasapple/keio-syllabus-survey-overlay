@@ -10,22 +10,22 @@
     <main>
       <header>
         <h1>Keio Survey Overlay</h1>
-        <p>シラバス上に、保存済みの授業評価を表示します。</p>
+        <p>シラバス上に、K-Supportの授業評価を重ねて表示します。</p>
       </header>
 
       <section id="readiness-card" class="status-card" aria-label="現在の状態">
         <span>現在の状態</span>
         <h2 id="readiness-title">確認中</h2>
-        <p id="readiness-note">保存状況を確認しています。</p>
+        <p id="readiness-note">保存済みデータを確認しています。</p>
       </section>
 
       <dl class="summary-list">
         <div>
-          <dt>使える評価</dt>
+          <dt>表示できる授業</dt>
           <dd id="evaluation-count">-</dd>
         </div>
         <div>
-          <dt>コメント付き</dt>
+          <dt>自由記述つき</dt>
           <dd id="comment-count">-</dd>
         </div>
         <div>
@@ -33,27 +33,29 @@
           <dd id="last-seen">-</dd>
         </div>
         <div>
-          <dt>K-Support</dt>
+          <dt>K-Support接続</dt>
           <dd id="ksupport-status">-</dd>
         </div>
       </dl>
-      <section class="progress-panel" aria-label="同期状況">
+
+      <section class="progress-panel" aria-label="保存済みデータの状況">
         <div class="progress-head">
           <div>
-            <h2>保存状況</h2>
+            <h2>保存済みデータ</h2>
             <p id="progress-stage">確認中</p>
           </div>
           <strong id="progress-percent">-</strong>
         </div>
-        <div class="progress-track">
+        <div class="progress-track" aria-hidden="true">
           <div id="progress-bar" class="progress-bar"></div>
         </div>
-        <p id="progress-note" class="progress-note">K-Support にログインして更新すると、保存できた範囲が表示されます。</p>
-        <p id="cache-detail" class="cache-detail">評価 - 件</p>
+        <p id="progress-note" class="progress-note">K-Supportにログインして更新すると、シラバス上で使える評価が保存されます。</p>
+        <p id="cache-detail" class="cache-detail">保存済み評価 - 件</p>
       </section>
-      <p class="privacy-note">授業評価とコメントはこの端末にだけ保存されます。</p>
+
+      <p class="privacy-note">保存先はこのブラウザ内だけです。K-SupportのID・パスワード・Cookieは保存しません。</p>
       <button id="open-ksupport" type="button">K-Supportを開く</button>
-      <button id="sync-all" type="button">評価データを更新</button>
+      <button id="sync-all" type="button">授業評価を同期する</button>
       <p id="debug-message" class="debug-message"></p>
     </main>
     <script src="../src/shared.js"></script>
