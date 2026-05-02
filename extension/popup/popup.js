@@ -9,6 +9,14 @@
   let progressTimer = null;
   let optimisticProgress = null;
 
+  function debugLog(label, payload = null) {
+    if (payload == null) {
+      console.log(`[KSSO popup] ${label}`);
+      return;
+    }
+    console.log(`[KSSO popup] ${label}`, payload);
+  }
+
   function countValues(value) {
     if (!value || typeof value !== "object") return 0;
     return new Set(
@@ -100,6 +108,20 @@
     const isRunning = progress.state === "running";
     const bar = document.getElementById("progress-bar");
 
+    debugLog("renderProgress", {
+      state: progress.state || "none",
+      phaseName: progress.phaseName || null,
+      expected,
+      found,
+      detailFetched,
+      detailTotal,
+      detailFailed,
+      capped,
+      percent,
+      progressUpdatedAt: progress.updatedAt || null,
+      syncFinishedAt: sync.finishedAt || null
+    });
+
     document.getElementById("progress-stage").textContent = phaseText(progress);
     document.getElementById("progress-percent").textContent = percent == null ? (isRunning ? "同期中" : "-") : `${percent}%`;
     document.getElementById("expected-total").textContent = formatNumber(expected);
@@ -146,6 +168,7 @@
   }
 
   async function renderCounts() {
+    debugLog("renderCounts:start");
     const state = await storageGet({
       [STORAGE_KEYS.courses]: {},
       [STORAGE_KEYS.evaluations]: {},
@@ -154,16 +177,38 @@
       [STORAGE_KEYS.lastSyncProgress]: null
     });
     let [cachedCourses, cachedEvaluations, syncMeta, progressMeta] = await Promise.all([
-      cacheGetAll("courses").catch(() => []),
-      cacheGetAll("evaluations").catch(() => []),
-      cacheGetMeta("lastSyncAllEvaluations").catch(() => null),
-      cacheGetMeta("lastSyncProgress").catch(() => null)
+      cacheGetAll("courses").catch((error) => {
+        console.warn("[KSSO popup] cacheGetAll(courses) failed", error);
+        return [];
+      }),
+      cacheGetAll("evaluations").catch((error) => {
+        console.warn("[KSSO popup] cacheGetAll(evaluations) failed", error);
+        return [];
+      }),
+      cacheGetMeta("lastSyncAllEvaluations").catch((error) => {
+        console.warn("[KSSO popup] cacheGetMeta(lastSyncAllEvaluations) failed", error);
+        return null;
+      }),
+      cacheGetMeta("lastSyncProgress").catch((error) => {
+        console.warn("[KSSO popup] cacheGetMeta(lastSyncProgress) failed", error);
+        return null;
+      })
     ]);
     syncMeta ||= storageMeta(state[STORAGE_KEYS.lastSyncAllEvaluations]);
     progressMeta ||= storageMeta(state[STORAGE_KEYS.lastSyncProgress]) || optimisticProgress;
     const courseCount = Math.max(cachedCourses.length, countValues(state[STORAGE_KEYS.courses]));
     const evaluationCount = Math.max(cachedEvaluations.length, countValues(state[STORAGE_KEYS.evaluations]));
     const commentsCount = cachedEvaluations.filter((evaluation) => commentSectionCount(evaluation) > 0).length;
+
+    debugLog("renderCounts:data", {
+      cachedCourses: cachedCourses.length,
+      cachedEvaluations: cachedEvaluations.length,
+      storageCourses: countValues(state[STORAGE_KEYS.courses]),
+      storageEvaluations: countValues(state[STORAGE_KEYS.evaluations]),
+      syncMeta: syncMeta?.value || null,
+      progressMeta: progressMeta?.value || null
+    });
+
     document.getElementById("course-count").textContent = String(courseCount);
     document.getElementById("evaluation-count").textContent = String(evaluationCount);
     document.getElementById("comment-count").textContent = String(commentsCount);
@@ -181,23 +226,28 @@
     renderProgress(progressMeta, syncMeta);
     renderReadiness({ evaluationCount, progressMeta, syncMeta });
     if (progressMeta?.value?.state === "running" && !progressTimer) {
+      debugLog("progressTimer:start");
       progressTimer = setInterval(() => void renderCounts(), 2000);
     }
     if (progressMeta?.value?.state !== "running" && progressTimer) {
+      debugLog("progressTimer:stop", { state: progressMeta?.value?.state || null });
       clearInterval(progressTimer);
       progressTimer = null;
     }
   }
 
   function renderKSupportStatus() {
+    debugLog("ksupportStatus:request");
     chrome.runtime.sendMessage({ type: "keioSurvey.ksupportStatus" }, (response) => {
       const element = document.getElementById("ksupport-status");
       if (chrome.runtime.lastError || !response?.ok) {
+        console.warn("[KSSO popup] ksupportStatus failed", chrome.runtime.lastError, response);
         element.textContent = "未接続";
         return;
       }
       const tabs = Array.isArray(response.tabs) ? response.tabs : [];
       const ready = tabs.some((tab) => tab.ok && tab.hasToken);
+      debugLog("ksupportStatus:response", { ready, tabs });
       element.textContent = ready ? "準備OK" : tabs.length ? "要再読込" : "未検出";
       void renderCounts().then(() => renderReadiness({
         evaluationCount: Number(document.getElementById("evaluation-count").textContent) || 0,
@@ -209,16 +259,21 @@
   }
 
   async function main() {
+    debugLog("main:start");
     await renderCounts();
     renderKSupportStatus();
   }
 
   document.getElementById("open-ksupport").addEventListener("click", () => {
-    chrome.runtime.sendMessage({ type: "keioSurvey.openKSupport" });
+    debugLog("openKSupport:click");
+    chrome.runtime.sendMessage({ type: "keioSurvey.openKSupport" }, (response) => {
+      debugLog("openKSupport:response", response || chrome.runtime.lastError?.message);
+    });
   });
 
   document.getElementById("sync-all").addEventListener("click", () => {
     const message = document.getElementById("debug-message");
+    debugLog("syncAll:click", { includeComments: false });
     optimisticProgress = storageMeta({
       state: "running",
       phaseName: "starting",
@@ -228,6 +283,7 @@
     message.textContent = "同期を開始しています...";
     void renderCounts();
     chrome.runtime.sendMessage({ type: "keioSurvey.syncAllEvaluations", options: { includeComments: false } }, (response) => {
+      debugLog("syncAll:response", response || chrome.runtime.lastError?.message);
       if (chrome.runtime.lastError || !response?.ok) {
         optimisticProgress = null;
         message.textContent = "同期を開始できませんでした。K-Support を開いてログインしてください。";
@@ -235,8 +291,12 @@
         return;
       }
       message.textContent = response.started ? "同期を開始しました。進み具合は上に表示されます。" : "同期はすでに実行中です。進み具合を確認しています。";
-      if (!progressTimer) progressTimer = setInterval(() => void renderCounts(), 2000);
+      if (!progressTimer) {
+        debugLog("progressTimer:startAfterSyncClick");
+        progressTimer = setInterval(() => void renderCounts(), 2000);
+      }
       setTimeout(() => void renderCounts(), 800);
+      setTimeout(() => void renderCounts(), 2000);
     });
   });
 
