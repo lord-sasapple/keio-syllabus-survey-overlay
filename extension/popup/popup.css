@@ -10,16 +10,20 @@ main {
   padding: 18px;
 }
 
+header {
+  margin-bottom: 14px;
+}
+
 h1 {
-  margin: 0 0 16px;
+  margin: 0 0 8px;
   font-size: 22px;
   line-height: 1.25;
 }
 
 dl {
   display: grid;
-  gap: 10px;
-  margin: 0 0 16px;
+  gap: 8px;
+  margin: 0 0 14px;
 }
 
 dl > div {
@@ -29,18 +33,29 @@ dl > div {
   gap: 12px;
   border: 1px solid #e5eaf1;
   border-radius: 8px;
-  padding: 12px 14px;
+  padding: 10px 12px;
   background: #f8fafc;
 }
 
+.status-card,
 .progress-panel {
   display: grid;
-  gap: 10px;
-  margin: 0 0 16px;
+  gap: 8px;
+  margin: 0 0 14px;
   border: 1px solid #dbe4ef;
   border-radius: 8px;
   padding: 12px;
   background: #ffffff;
+}
+
+.status-card span {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.status-card h2 {
+  margin: 0;
 }
 
 .progress-head {
@@ -58,7 +73,8 @@ h2 {
 }
 
 .progress-head p,
-.progress-note {
+.progress-note,
+.cache-detail {
   margin: 2px 0 0;
   color: #64748b;
   font-size: 12px;
@@ -94,54 +110,28 @@ h2 {
   background: #f59e0b;
 }
 
-.progress-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
-}
-
-.progress-grid div {
-  display: grid;
-  gap: 2px;
-  border: 1px solid #e5eaf1;
-  border-radius: 8px;
-  padding: 8px;
-  background: #f8fafc;
-}
-
-.progress-grid span {
-  color: #64748b;
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.progress-grid strong {
-  color: #111827;
-  font-size: 14px;
-}
-
 dt {
   color: #64748b;
-  font-size: 16px;
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 700;
 }
 
 dd {
   margin: 0;
   color: #111827;
-  font-size: 18px;
-  font-weight: 700;
+  font-size: 16px;
+  font-weight: 800;
 }
 
 p {
   margin: 0;
   color: #64748b;
-  font-size: 15px;
+  font-size: 14px;
 }
 
 button {
   width: 100%;
-  margin-top: 12px;
+  margin-top: 10px;
   border: 1px solid #cbd5e1;
   border-radius: 8px;
   padding: 11px 12px;
@@ -149,12 +139,17 @@ button {
   color: #1f2937;
   cursor: pointer;
   font: inherit;
-  font-size: 16px;
-  font-weight: 700;
+  font-size: 15px;
+  font-weight: 800;
 }
 
 button:hover {
   background: #f1f5f9;
+}
+
+.privacy-note {
+  margin-bottom: 8px;
+  font-size: 12px;
 }
 
 .debug-message {
