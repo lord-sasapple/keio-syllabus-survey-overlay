@@ -17,6 +17,27 @@
     console.log(`[KSSO popup] ${label}`, payload);
   }
 
+  function $(id) {
+    const element = document.getElementById(id);
+    if (!element) debugLog("missing popup element", { id });
+    return element;
+  }
+
+  function setText(id, value) {
+    const element = $(id);
+    if (element) element.textContent = value;
+  }
+
+  function setWidth(id, value) {
+    const element = $(id);
+    if (element) element.style.width = value;
+  }
+
+  function toggleClass(id, className, enabled) {
+    const element = $(id);
+    if (element) element.classList.toggle(className, enabled);
+  }
+
   function countValues(value) {
     if (!value || typeof value !== "object") return 0;
     return new Set(
@@ -67,6 +88,10 @@
     return Number.isFinite(value) ? value.toLocaleString("ja-JP") : "-";
   }
 
+  function storageMeta(value) {
+    return value ? { value } : null;
+  }
+
   function phaseText(progress) {
     if (progress?.derivedPartial) return "部分キャッシュ";
     const phaseName = progress?.phaseName;
@@ -106,7 +131,6 @@
     const capped = Number(progress.cappedSegmentsCount ?? (useSyncFallback && Array.isArray(sync.cappedSegments) ? sync.cappedSegments.length : 0));
     const percent = progressPercent(progress, syncMeta);
     const isRunning = progress.state === "running";
-    const bar = document.getElementById("progress-bar");
 
     debugLog("renderProgress", {
       state: progress.state || "none",
@@ -122,58 +146,44 @@
       syncFinishedAt: sync.finishedAt || null
     });
 
-    document.getElementById("progress-stage").textContent = phaseText(progress);
-    document.getElementById("progress-percent").textContent = percent == null ? (isRunning ? "同期中" : "-") : `${percent}%`;
-    document.getElementById("expected-total").textContent = formatNumber(expected);
-    document.getElementById("search-found").textContent = formatNumber(found);
-    document.getElementById("detail-progress").textContent = `${formatNumber(detailFetched)} / ${formatNumber(detailTotal)}`;
-    document.getElementById("progress-note").textContent = progress.message || (capped ? "まだ 1,500 件上限に当たっている検索条件があります。" : "同期中はこの画面を閉じても大丈夫です。K-Supportタブは開いたままにしてください。");
-    document.getElementById("cache-detail").textContent = Number.isFinite(detailFetched) || Number.isFinite(detailTotal)
+    setText("progress-stage", phaseText(progress));
+    setText("progress-percent", percent == null ? (isRunning ? "同期中" : "-") : `${percent}%`);
+    setText("expected-total", formatNumber(expected));
+    setText("search-found", formatNumber(found));
+    setText("detail-progress", `${formatNumber(detailFetched)} / ${formatNumber(detailTotal)}`);
+    setText("progress-note", progress.message || (capped ? "まだ 1,500 件上限に当たっている検索条件があります。" : "同期中はこの画面を閉じても大丈夫です。K-Supportタブは開いたままにしてください。"));
+    setText("cache-detail", Number.isFinite(detailFetched) || Number.isFinite(detailTotal)
       ? `保存済み評価 ${formatNumber(detailFetched)} / ${formatNumber(detailTotal)} 件${detailFailed ? `（失敗 ${formatNumber(detailFailed)} 件）` : ""}`
-      : "保存済み評価 - 件";
-    bar.style.width = percent == null ? (isRunning ? "100%" : "0%") : `${percent}%`;
-    bar.classList.toggle("is-running", isRunning);
-    bar.classList.toggle("is-indeterminate", isRunning && percent == null);
-    bar.classList.toggle("is-warning", capped > 0 || detailFailed > 0);
-  }
-
-  function storageMeta(value) {
-    return value ? { value } : null;
-  }
-
-  function setText(id, value) {
-    const element = document.getElementById(id);
-    if (!element) {
-      debugLog("missing optional popup element", { id });
-      return;
-    }
-    element.textContent = value;
+      : "保存済み評価 - 件");
+    setWidth("progress-bar", percent == null ? (isRunning ? "100%" : "0%") : `${percent}%`);
+    toggleClass("progress-bar", "is-running", isRunning);
+    toggleClass("progress-bar", "is-indeterminate", isRunning && percent == null);
+    toggleClass("progress-bar", "is-warning", capped > 0 || detailFailed > 0);
   }
 
   function renderReadiness({ evaluationCount, progressMeta, syncMeta, ksupportReady = null }) {
     const progress = progressMeta?.value || {};
     const sync = syncMeta?.value || {};
-    const title = document.getElementById("readiness-title");
-    const note = document.getElementById("readiness-note");
     if (progress.state === "running") {
-      title.textContent = "同期中";
-      note.textContent = "授業評価を保存しています。進み具合は下に表示されます。";
+      setText("readiness-title", "同期中");
+      setText("readiness-note", "授業評価を保存しています。進み具合は下に表示されます。");
       return;
     }
     if (evaluationCount > 0) {
-      title.textContent = "表示できます";
-      note.textContent = `${evaluationCount.toLocaleString("ja-JP")}件の授業評価をシラバス上で表示できます。`;
+      setText("readiness-title", "表示できます");
+      setText("readiness-note", `${evaluationCount.toLocaleString("ja-JP")}件の授業評価をシラバス上で表示できます。`);
       return;
     }
     if (sync.ok === false) {
-      title.textContent = "同期に失敗";
-      note.textContent = "K-Supportを開いてログインし直してから、もう一度同期してください。";
+      setText("readiness-title", "同期に失敗");
+      setText("readiness-note", "K-Supportを開いてログインし直してから、もう一度同期してください。");
       return;
     }
-    title.textContent = ksupportReady ? "同期できます" : "未同期";
-    note.textContent = ksupportReady
+    setText("readiness-title", ksupportReady ? "同期できます" : "未同期");
+    setText("readiness-note", ksupportReady
       ? "K-Supportに接続できています。授業評価を同期できます。"
-      : "まずK-Supportを開いてログインしてください。";
+      : "まずK-Supportを開いてログインしてください。"
+    );
   }
 
   async function renderCounts() {
@@ -218,10 +228,10 @@
       progressMeta: progressMeta?.value || null
     });
 
-    document.getElementById("course-count").textContent = String(courseCount);
-    document.getElementById("evaluation-count").textContent = String(evaluationCount);
-    document.getElementById("comment-count").textContent = String(commentsCount);
-    document.getElementById("last-seen").textContent = formatLastSeen(syncMeta?.value) !== "-" ? formatLastSeen(syncMeta.value) : formatLastSeen(state[STORAGE_KEYS.lastSeen]);
+    setText("course-count", String(courseCount));
+    setText("evaluation-count", String(evaluationCount));
+    setText("comment-count", String(commentsCount));
+    setText("last-seen", formatLastSeen(syncMeta?.value) !== "-" ? formatLastSeen(syncMeta.value) : formatLastSeen(state[STORAGE_KEYS.lastSeen]));
     setText("sync-status", syncMeta?.value ? syncStatusText(syncMeta) : evaluationCount ? "部分保存" : "未同期");
     setText("sync-count", syncMeta?.value ? syncCountText(syncMeta) : evaluationCount ? `${evaluationCount}/-` : "-");
     if (!progressMeta?.value && (courseCount || evaluationCount)) {
@@ -248,18 +258,17 @@
   function renderKSupportStatus() {
     debugLog("ksupportStatus:request");
     chrome.runtime.sendMessage({ type: "keioSurvey.ksupportStatus" }, (response) => {
-      const element = document.getElementById("ksupport-status");
       if (chrome.runtime.lastError || !response?.ok) {
         console.warn("[KSSO popup] ksupportStatus failed", chrome.runtime.lastError, response);
-        element.textContent = "未接続";
+        setText("ksupport-status", "未接続");
         return;
       }
       const tabs = Array.isArray(response.tabs) ? response.tabs : [];
       const ready = tabs.some((tab) => tab.ok && tab.hasToken);
       debugLog("ksupportStatus:response", { ready, tabs });
-      element.textContent = ready ? "準備OK" : tabs.length ? "要再読込" : "未検出";
+      setText("ksupport-status", ready ? "準備OK" : tabs.length ? "要再読込" : "未検出");
       void renderCounts().then(() => renderReadiness({
-        evaluationCount: Number(document.getElementById("evaluation-count").textContent) || 0,
+        evaluationCount: Number($("evaluation-count")?.textContent) || 0,
         progressMeta: optimisticProgress,
         syncMeta: null,
         ksupportReady: ready
@@ -273,15 +282,14 @@
     renderKSupportStatus();
   }
 
-  document.getElementById("open-ksupport").addEventListener("click", () => {
+  $("open-ksupport")?.addEventListener("click", () => {
     debugLog("openKSupport:click");
     chrome.runtime.sendMessage({ type: "keioSurvey.openKSupport" }, (response) => {
       debugLog("openKSupport:response", response || chrome.runtime.lastError?.message);
     });
   });
 
-  document.getElementById("sync-all").addEventListener("click", () => {
-    const message = document.getElementById("debug-message");
+  $("sync-all")?.addEventListener("click", () => {
     debugLog("syncAll:click", { includeComments: false });
     optimisticProgress = storageMeta({
       state: "running",
@@ -289,17 +297,17 @@
       message: "K-Supportに同期開始を依頼しました。最初の件数取得まで少し待ってください。",
       startedAt: new Date().toISOString()
     });
-    message.textContent = "同期を開始しています...";
+    setText("debug-message", "同期を開始しています...");
     void renderCounts();
     chrome.runtime.sendMessage({ type: "keioSurvey.syncAllEvaluations", options: { includeComments: false } }, (response) => {
       debugLog("syncAll:response", response || chrome.runtime.lastError?.message);
       if (chrome.runtime.lastError || !response?.ok) {
         optimisticProgress = null;
-        message.textContent = "同期を開始できませんでした。K-Support を開いてログインしてください。";
+        setText("debug-message", "同期を開始できませんでした。K-Support を開いてログインしてください。");
         void renderCounts();
         return;
       }
-      message.textContent = response.started ? "同期を開始しました。進み具合は上に表示されます。" : "同期はすでに実行中です。進み具合を確認しています。";
+      setText("debug-message", response.started ? "同期を開始しました。進み具合は上に表示されます。" : "同期はすでに実行中です。進み具合を確認しています。");
       if (!progressTimer) {
         debugLog("progressTimer:startAfterSyncClick");
         progressTimer = setInterval(() => void renderCounts(), 2000);
