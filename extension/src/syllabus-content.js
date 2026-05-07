@@ -1,23 +1,27 @@
 (() => {
   const {
     STORAGE_KEYS,
+    cacheGetAll,
+    cachePut,
     compactCourseKey,
     normalizeText,
     scoreCourseMatch,
     storageGet,
-    storageSet
+    storageSet,
   } = window.KeioSurveyShared;
 
   const ROOT_ID = "keio-survey-overlay-root";
   const STYLE_ID = "keio-survey-overlay-style";
+  const FETCH_TIMEOUT_MS = 45 * 1000;
   const CHOICE_LABELS = [
-    "①そう思わない",
-    "②あまりそう思わない",
-    "③どちらともいえない",
-    "④ややそう思う",
-    "⑤そう思う"
+    "1 そう思わない",
+    "2 あまりそう思わない",
+    "3 どちらともいえない",
+    "4 ややそう思う",
+    "5 そう思う",
   ];
-  const CHOICE_COLORS = ["#f4aaa0", "#f4d2c1", "#e8e8e8", "#c8d9f8", "#9fb6ef"];
+  // const CHOICE_COLORS = ["#f27b6b", "#f6ba9c", "#c39bfa", "#9abaf7", "#5681ee"];
+  const CHOICE_COLORS = ["#5681ee", "#9ab3f2", "#f7cca0", "#f9c366", "#f59e0b"];
 
   function readText(selector, root = document) {
     return normalizeText(root.querySelector(selector)?.textContent || "");
@@ -25,7 +29,9 @@
 
   function readInfoMap() {
     const map = new Map();
-    for (const row of document.querySelectorAll(".syllabus-header tr, #screen-detail tr")) {
+    for (const row of document.querySelectorAll(
+      ".syllabus-header tr, #screen-detail tr",
+    )) {
       const label = normalizeText(row.querySelector("th")?.textContent || "");
       const value = normalizeText(row.querySelector("td")?.textContent || "");
       if (label && value) map.set(label, value);
@@ -44,24 +50,65 @@
     const info = readInfoMap();
     const url = new URL(location.href);
     return {
-      courseName: readText(".syllabus-header h2.class-name") || readText("h2.class-name") || readText("h1,h2"),
+      courseName:
+        readText(".syllabus-header h2.class-name") ||
+        readText("h2.class-name") ||
+        readText("h1,h2"),
       lecturer: pick(info, [/担当/, /教員/, /Lecturer|Instructor/i]),
-      semester: pick(info, [/学期/, /Semester|Term/i]) || url.searchParams.get("ttblyr") || "",
+      semester:
+        pick(info, [/学期/, /Semester|Term/i]) ||
+        url.searchParams.get("ttblyr") ||
+        "",
       dayPeriod: pick(info, [/曜日|時限/, /Day|Period/i]),
       campus: pick(info, [/キャンパス/, /Campus/i]),
       faculty: pick(info, [/学部|研究科|設置/, /Faculty|Department/i]),
-      registrationNumber: url.searchParams.get("entno") || ""
+      registrationNumber: url.searchParams.get("entno") || "",
     };
   }
 
-  function runtimeMessage(message) {
+  function isSyllabusDetailPage() {
+    const path = location.pathname;
+    if (/\/(?:pub-)?syllabus\/detail(?:\/|$)/.test(path)) return true;
+
+    const url = new URL(location.href);
+    return (
+      url.searchParams.has("entno") &&
+      Boolean(document.querySelector(".syllabus-header, #screen-detail"))
+    );
+  }
+
+  function hasCourseIdentity(syllabus) {
+    return Boolean(
+      syllabus.registrationNumber ||
+      (syllabus.courseName &&
+        (syllabus.lecturer || syllabus.semester || syllabus.campus)),
+    );
+  }
+
+  function runtimeMessage(message, options = {}) {
+    const timeoutMs =
+      Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : null;
     return new Promise((resolve) => {
+      let settled = false;
+      const timer = timeoutMs
+        ? setTimeout(() => {
+            settled = true;
+            resolve({
+              ok: false,
+              code: "RUNTIME_MESSAGE_TIMEOUT",
+              message: "K-Support から時間内に応答がありませんでした。",
+            });
+          }, timeoutMs)
+        : null;
       chrome.runtime.sendMessage(message, (response) => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
         if (chrome.runtime.lastError) {
           resolve({
             ok: false,
             code: "RUNTIME_MESSAGE_FAILED",
-            message: chrome.runtime.lastError.message
+            message: chrome.runtime.lastError.message,
           });
           return;
         }
@@ -71,7 +118,9 @@
   }
 
   function objectStore(value) {
-    return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+    return value && typeof value === "object" && !Array.isArray(value)
+      ? value
+      : {};
   }
 
   function uniqueEvaluations(store) {
@@ -98,14 +147,19 @@
 
   function normalizeCommentSections(sections) {
     return Array.isArray(sections)
-      ? sections.map((section) => ({
-          kind: normalizeText(section.kind),
-          title: normalizeText(section.title),
-          en: normalizeText(section.en),
-          comments: Array.isArray(section.comments)
-            ? section.comments.map((comment) => normalizeText(comment)).filter(Boolean).slice(0, 30)
-            : []
-        })).filter((section) => section.comments.length)
+      ? sections
+          .map((section) => ({
+            kind: normalizeText(section.kind),
+            title: normalizeText(section.title),
+            en: normalizeText(section.en),
+            comments: Array.isArray(section.comments)
+              ? section.comments
+                  .map((comment) => normalizeText(comment))
+                  .filter(Boolean)
+                  .slice(0, 30)
+              : [],
+          }))
+          .filter((section) => section.comments.length)
       : [];
   }
 
@@ -123,7 +177,10 @@
         dayPeriod: normalizeText(course.dayPeriod),
         campus: normalizeText(course.campus),
         faculty: normalizeText(course.faculty),
-        answerPercent: typeof course.answerPercent === "number" ? course.answerPercent : null
+        answerPercent:
+          typeof course.answerPercent === "number"
+            ? course.answerPercent
+            : null,
       },
       questions: Array.isArray(event.questions)
         ? event.questions.map((question) => ({
@@ -131,22 +188,30 @@
             ja: normalizeText(question.ja),
             en: normalizeText(question.en),
             avg: typeof question.avg === "number" ? question.avg : null,
-            counts: Array.isArray(question.counts) ? question.counts.slice(0, 5).map((count) => Number(count) || 0) : []
+            counts: Array.isArray(question.counts)
+              ? question.counts.slice(0, 5).map((count) => Number(count) || 0)
+              : [],
           }))
-        : []
+        : [],
     };
     if (options.includeComments) {
-      evaluation.commentSections = normalizeCommentSections(event.commentSections);
+      evaluation.commentSections = normalizeCommentSections(
+        event.commentSections,
+      );
     }
     return evaluation;
   }
 
   async function saveEvaluation(event) {
-    const evaluation = normalizeEvaluation(event, { includeComments: false });
+    const evaluation = normalizeEvaluation(event, { includeComments: true });
     if (!evaluation.recordId && !evaluation.questions.length) return;
+    const storageEvaluation = {
+      ...evaluation,
+      commentSections: [],
+    };
     const current = await storageGet({
       [STORAGE_KEYS.courses]: {},
-      [STORAGE_KEYS.evaluations]: {}
+      [STORAGE_KEYS.evaluations]: {},
     });
     const courses = objectStore(current[STORAGE_KEYS.courses]);
     const evaluations = objectStore(current[STORAGE_KEYS.evaluations]);
@@ -155,17 +220,20 @@
     if (evaluation.recordId) {
       courses[`record:${evaluation.recordId}`] = {
         ...evaluation.course,
-        recordId: evaluation.recordId
+        recordId: evaluation.recordId,
       };
-      evaluations[`record:${evaluation.recordId}`] = evaluation;
+      evaluations[`record:${evaluation.recordId}`] = storageEvaluation;
     }
     if (key.replace(/\|/g, "")) {
       courses[`key:${key}`] = {
         ...evaluation.course,
-        recordId: evaluation.recordId
+        recordId: evaluation.recordId,
       };
-      evaluations[`key:${key}`] = evaluation;
+      evaluations[`key:${key}`] = storageEvaluation;
     }
+    await cachePut("evaluations", evaluation);
+    if (evaluation.course?.recordId)
+      await cachePut("courses", evaluation.course);
 
     await storageSet({
       [STORAGE_KEYS.courses]: courses,
@@ -173,13 +241,15 @@
       [STORAGE_KEYS.lastSeen]: {
         url: location.href,
         title: document.title,
-        at: new Date().toISOString()
-      }
+        at: new Date().toISOString(),
+      },
     });
   }
 
   function formatPercent(value) {
-    return typeof value === "number" ? `${value.toFixed(1).replace(/\.0$/, "")}%` : "-";
+    return typeof value === "number"
+      ? `${value.toFixed(1).replace(/\.0$/, "")}%`
+      : "-";
   }
 
   function formatAvg(value) {
@@ -187,7 +257,8 @@
   }
 
   function renderRating(value) {
-    const score = typeof value === "number" ? clampPercent((value / 5) * 100) : 0;
+    const score =
+      typeof value === "number" ? clampPercent((value / 5) * 100) : 0;
     return `
       <span class="ksso-rating">
         <span class="ksso-rating-number">${formatAvg(value)}</span>
@@ -195,6 +266,17 @@
           <span class="ksso-stars-base">★★★★★</span>
           <span class="ksso-stars-fill" style="width: ${score}%">★★★★★</span>
         </span>
+      </span>
+    `;
+  }
+
+  function renderStars(value) {
+    const score =
+      typeof value === "number" ? clampPercent((value / 5) * 100) : 0;
+    return `
+      <span class="ksso-stars" aria-label="5点中 ${formatAvg(value)}">
+        <span class="ksso-stars-base">★★★★★</span>
+        <span class="ksso-stars-fill" style="width: ${score}%">★★★★★</span>
       </span>
     `;
   }
@@ -214,38 +296,67 @@
   function renderLegend() {
     return `
       <div class="ksso-legend" aria-label="回答選択肢">
-        ${CHOICE_LABELS.map((label, index) => `
+        ${CHOICE_LABELS.map(
+          (label, index) => `
           <span class="ksso-legend-item">
             <span class="ksso-swatch" style="background: ${CHOICE_COLORS[index]}"></span>
             <span>${escapeHtml(label)}</span>
           </span>
-        `).join("")}
+        `,
+        ).join("")}
       </div>
     `;
   }
 
-  function renderDistributionBar(counts, total) {
-    if (!total) {
-      return '<div class="ksso-distribution ksso-distribution-empty" aria-hidden="true"></div>';
-    }
+  function renderChoiceRows(counts, total) {
     return `
-      <div class="ksso-distribution" aria-hidden="true">
-        ${CHOICE_LABELS.map((label, index) => {
-          const percent = clampPercent(choicePercent(counts[index] || 0, total) || 0);
-          if (percent === 0) return "";
-          const shortLabel = label.slice(0, 1);
-          return `
-            <span
-              class="ksso-distribution-segment"
-              style="width: ${percent}%; background: ${CHOICE_COLORS[index]}"
-              title="${escapeHtml(label)} ${formatPercent(percent)}"
-            >
-              ${percent >= 12 ? `${escapeHtml(shortLabel)} ${formatPercent(percent)}` : ""}
-            </span>
+      <div class="ksso-choice-rows" aria-label="回答分布">
+        ${[4, 3, 2, 1, 0]
+          .map((index) => {
+            const percent = clampPercent(
+              choicePercent(counts[index] || 0, total) || 0,
+            );
+            return `
+            <div class="ksso-choice-row">
+              <span class="ksso-choice-row-label">${index + 1}</span>
+              <span class="ksso-choice-track">
+                <span
+                  class="ksso-choice-fill"
+                  style="width: ${percent}%; background: ${CHOICE_COLORS[index]}"
+                ></span>
+              </span>
+            </div>
           `;
-        }).join("")}
+          })
+          .join("")}
       </div>
     `;
+  }
+
+  function isReversedWorkloadQuestion(question) {
+    const text = normalizeText(`${question?.ja || ""} ${question?.en || ""}`);
+    if (/適切/.test(text)) return false;
+    return /負荷/.test(text) && /(大きすぎ|大き過ぎ|重すぎ|重過ぎ)/.test(text);
+  }
+
+  function displayQuestion(question) {
+    if (!isReversedWorkloadQuestion(question)) {
+      return {
+        avg: question.avg,
+        counts: Array.isArray(question.counts) ? question.counts : [],
+        title: question.ja || question.en || `Q${question.index}`,
+        reversed: false,
+      };
+    }
+    const avg = typeof question.avg === "number" ? 6 - question.avg : null;
+    return {
+      avg,
+      counts: Array.isArray(question.counts)
+        ? question.counts.slice().reverse()
+        : [],
+      title: `Q${question.index} 学修の負荷は適切だった`,
+      reversed: true,
+    };
   }
 
   function renderCommentSections(sections) {
@@ -254,31 +365,91 @@
     return `
       <div class="ksso-comments">
         <div class="ksso-section-title">自由記述コメント</div>
-        ${visibleSections.map((section) => `
+        ${visibleSections
+          .map(
+            (section) => `
           <section class="ksso-comment-section ksso-comment-${escapeHtml(section.kind || "other")}">
-            <h4><span class="ksso-comment-tone" aria-hidden="true"></span>${escapeHtml(section.title)} <span>${escapeHtml(section.en)}</span></h4>
+            <h4><span class="ksso-comment-tone" aria-hidden="true"></span>${escapeHtml(section.title)}</h4>
             <div class="ksso-comment-bubbles">
               ${section.comments.map((comment) => `<p class="ksso-comment-bubble">${escapeHtml(comment)}</p>`).join("")}
             </div>
           </section>
-        `).join("")}
+        `,
+          )
+          .join("")}
       </div>
     `;
   }
 
   function renderQuestion(question) {
-    const counts = Array.isArray(question.counts) ? question.counts : [];
+    const display = displayQuestion(question);
+    const counts = display.counts;
     const total = choiceTotal(counts);
-    const title = question.ja || question.en || `Q${question.index}`;
     return `
       <li class="ksso-question">
         <div class="ksso-question-head">
-          <span class="ksso-question-title">${escapeHtml(title)}</span>
-          <span class="ksso-question-avg">平均 ${formatAvg(question.avg)}</span>
+          <span class="ksso-question-title">
+            ${escapeHtml(display.title)}
+            ${
+              display.reversed
+                ? `
+              <button type="button" class="ksso-info-button" aria-label="表示を反転した理由">
+                i
+                <span class="ksso-tooltip" role="tooltip">元の設問は「学修の負荷が大きすぎた」でした。見やすくするため、高いほど良い評価になるように表示を反転しています。</span>
+              </button>
+            `
+                : ""
+            }
+          </span>
         </div>
-        ${renderDistributionBar(counts, total)}
+        <div class="ksso-question-overview">
+          ${renderChoiceRows(counts, total)}
+          <div class="ksso-question-score">
+            <span class="ksso-question-score-value">${formatAvg(display.avg)}</span>
+            <span class="ksso-question-score-stars">${renderStars(display.avg)}</span>
+          </div>
+        </div>
       </li>
     `;
+  }
+
+  function primaryInstructorName(value) {
+    return normalizeText(value)
+      .replace(/\s+他(?:\s|$).*/, "")
+      .split(/[、，;]/)[0]
+      .trim();
+  }
+
+  function renderFacultyProfile(profile, instructorName) {
+    if (!profile?.imageUrl || !profile?.profileUrl) return "";
+    const name = profile.name || instructorName;
+    return `
+      <a class="ksso-faculty-profile" href="${escapeHtml(profile.profileUrl)}" target="_blank" rel="noopener noreferrer">
+        <img class="ksso-faculty-photo" src="${escapeHtml(profile.imageUrl)}" alt="${escapeHtml(name)}">
+        <span class="ksso-faculty-body">
+          <span class="ksso-faculty-label">教員プロフィール</span>
+          <span class="ksso-faculty-name">${escapeHtml(name)} <span class="ksso-external-mark" aria-hidden="true">↗</span></span>
+          ${profile.affiliations ? `<span class="ksso-faculty-affiliation">${escapeHtml(profile.affiliations)}</span>` : ""}
+        </span>
+      </a>
+    `;
+  }
+
+  async function hydrateFacultyProfile(root, syllabus, evaluation) {
+    const slot = root.querySelector("[data-ksso-faculty-profile]");
+    if (!slot) return;
+    const instructorName = primaryInstructorName(
+      evaluation.course?.lecturer || syllabus.lecturer,
+    );
+    if (!instructorName) return;
+    const response = await runtimeMessage({
+      type: "keioSurvey.fetchFacultyProfile",
+      instructorName,
+      faculty: evaluation.course?.faculty || syllabus.faculty || "",
+    });
+    if (!response?.ok || !response.profile) return;
+    slot.innerHTML = renderFacultyProfile(response.profile, instructorName);
+    slot.hidden = !slot.innerHTML;
   }
 
   function escapeHtml(value) {
@@ -296,13 +467,9 @@
     style.id = STYLE_ID;
     style.textContent = `
       #${ROOT_ID} {
-        border: 1px solid #d7dee8;
-        border-radius: 8px;
         margin: 16px 0;
-        padding: 16px;
         background: #ffffff;
         color: #1f2937;
-        box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08);
         font-size: 14px;
         line-height: 1.55;
       }
@@ -321,6 +488,64 @@
         color: #64748b;
         font-size: 12px;
         white-space: nowrap;
+      }
+      #${ROOT_ID} .ksso-faculty-profile-slot[hidden] {
+        display: none;
+      }
+      #${ROOT_ID} .ksso-faculty-profile-slot {
+        min-width: 0;
+      }
+      #${ROOT_ID} .ksso-faculty-profile {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        width: 100%;
+        height: 100%;
+        max-width: 100%;
+        padding: 10px 12px;
+        color: #1f2937;
+        text-decoration: none;
+        box-sizing: border-box;
+      }
+      #${ROOT_ID} .ksso-faculty-profile:hover {
+        border-color: #cbd5e1;
+        background: #f8fafc;
+      }
+      #${ROOT_ID} .ksso-faculty-photo {
+        width: 76px;
+        height: 76px;
+        flex: 0 0 auto;
+        border-radius: 8px;
+        object-fit: cover;
+        background: #f1f5f9;
+      }
+      #${ROOT_ID} .ksso-faculty-body {
+        display: grid;
+        gap: 2px;
+        min-width: 0;
+      }
+      #${ROOT_ID} .ksso-faculty-label {
+        color: #64748b;
+        font-size: 11px;
+        font-weight: 700;
+      }
+      #${ROOT_ID} .ksso-faculty-name {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 14px;
+        font-weight: 700;
+      }
+      #${ROOT_ID} .ksso-faculty-affiliation,
+      #${ROOT_ID} .ksso-faculty-source {
+        color: #64748b;
+        font-size: 12px;
+        line-height: 1.35;
+      }
+      #${ROOT_ID} .ksso-external-mark {
+        color: #64748b;
+        font-size: 12px;
+        line-height: 1;
       }
       #${ROOT_ID} .ksso-actions {
         display: flex;
@@ -352,24 +577,56 @@
       }
       #${ROOT_ID} .ksso-summary {
         display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 8px;
-        margin-bottom: 12px;
+        grid-template-columns: minmax(300px, 1.15fr) minmax(280px, 1fr);
+        align-items: stretch;
+        gap: 10px;
+        margin-bottom: 14px;
+        border: 1px solid #d9d9d9;
+        border-radius: 10px;
       }
       #${ROOT_ID} .ksso-metric {
-        border: 1px solid #e5eaf1;
-        border-radius: 6px;
         padding: 8px 10px;
-        background: #f8fafc;
+      }
+      #${ROOT_ID} .ksso-metric--overall {
+        padding: 14px 16px;
+      }
+      #${ROOT_ID} .ksso-metric--responses {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px 14px;
+        margin-top: 8px;
+        color: #475569;
+      }
+      #${ROOT_ID} .ksso-response-row {
+        display: inline-flex;
+        align-items: baseline;
+        gap: 5px;
+      }
+      #${ROOT_ID} .ksso-response-name {
+        color: #64748b;
+        font-size: 11px;
+      }
+      #${ROOT_ID} .ksso-response-value {
+        color: #334155;
+        font-size: 12px;
+        font-weight: 700;
       }
       #${ROOT_ID} .ksso-label {
         color: #64748b;
         font-size: 12px;
       }
+      #${ROOT_ID} .ksso-metric--overall .ksso-label {
+        color: #92400e;
+        font-size: 13px;
+        font-weight: 700;
+      }
       #${ROOT_ID} .ksso-value {
         display: block;
         font-size: 18px;
         font-weight: 700;
+      }
+      #${ROOT_ID} .ksso-metric--overall .ksso-value {
+        margin-top: 4px;
       }
       #${ROOT_ID} .ksso-rating {
         display: flex;
@@ -379,6 +636,19 @@
       }
       #${ROOT_ID} .ksso-rating-number {
         flex: 0 0 auto;
+      }
+      #${ROOT_ID} .ksso-metric--overall .ksso-rating {
+        align-items: flex-end;
+        gap: 10px;
+      }
+      #${ROOT_ID} .ksso-metric--overall .ksso-rating-number {
+        color: #111827;
+        font-size: 42px;
+        font-weight: 800;
+        line-height: 0.95;
+      }
+      #${ROOT_ID} .ksso-metric--overall .ksso-stars {
+        font-size: 22px;
       }
       #${ROOT_ID} .ksso-stars {
         position: relative;
@@ -434,49 +704,119 @@
       #${ROOT_ID} .ksso-question {
         border: 1px solid #eef2f7;
         border-radius: 6px;
-        padding: 10px;
+        padding: 12px 14px;
         background: #ffffff;
       }
       #${ROOT_ID} .ksso-question-head {
         display: flex;
         justify-content: space-between;
         gap: 8px;
+        margin-bottom: 10px;
       }
       #${ROOT_ID} .ksso-question-title {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
         min-width: 0;
         font-weight: 600;
       }
-      #${ROOT_ID} .ksso-question-avg {
+      #${ROOT_ID} .ksso-info-button {
+        position: relative;
+        display: inline-grid;
+        place-items: center;
+        width: 18px;
+        height: 18px;
+        flex: 0 0 auto;
+        border: 1px solid #cbd5e1;
+        border-radius: 999px;
+        background: #ffffff;
         color: #64748b;
+        cursor: help;
+        font: inherit;
         font-size: 12px;
-        white-space: nowrap;
+        font-weight: 800;
+        line-height: 1;
       }
-      #${ROOT_ID} .ksso-distribution {
-        display: flex;
-        height: 24px;
-        overflow: hidden;
-        border: 1px solid #e2e8f0;
-        border-radius: 6px;
-        margin: 8px 0;
-        background: #f8fafc;
+      #${ROOT_ID} .ksso-info-button:hover,
+      #${ROOT_ID} .ksso-info-button:focus-visible {
+        border-color: #94a3b8;
+        color: #334155;
       }
-      #${ROOT_ID} .ksso-distribution-empty {
-        background: #f1f5f9;
+      #${ROOT_ID} .ksso-tooltip {
+        position: absolute;
+        z-index: 2;
+        left: 50%;
+        bottom: calc(100% + 8px);
+        width: max-content;
+        max-width: min(320px, 70vw);
+        transform: translateX(-50%);
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        padding: 8px 10px;
+        background: #0f172a;
+        color: #ffffff;
+        font-size: 12px;
+        font-weight: 600;
+        line-height: 1.45;
+        white-space: normal;
+        box-shadow: 0 8px 18px rgba(15, 23, 42, 0.18);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.12s ease;
       }
-      #${ROOT_ID} .ksso-distribution-segment {
-        display: inline-flex;
+      #${ROOT_ID} .ksso-info-button:hover .ksso-tooltip,
+      #${ROOT_ID} .ksso-info-button:focus-visible .ksso-tooltip {
+        opacity: 1;
+      }
+      #${ROOT_ID} .ksso-question-overview {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 96px;
         align-items: center;
-        justify-content: center;
+        gap: 18px;
+      }
+      #${ROOT_ID} .ksso-choice-rows {
+        display: grid;
+        gap: 7px;
+        min-width: 0;
+      }
+      #${ROOT_ID} .ksso-choice-row {
+        display: grid;
+        grid-template-columns: 22px minmax(0, 1fr);
+        align-items: center;
+        gap: 8px;
+      }
+      #${ROOT_ID} .ksso-choice-row-label {
+        color: #475569;
+        font-size: 13px;
+        font-weight: 700;
+        text-align: center;
+      }
+      #${ROOT_ID} .ksso-choice-track {
+        display: block;
+        height: 9px;
+        overflow: hidden;
+        border-radius: 999px;
+        background: #eef2f7;
+      }
+      #${ROOT_ID} .ksso-choice-fill {
+        display: block;
         height: 100%;
-        min-width: 2px;
+        border-radius: inherit;
+      }
+      #${ROOT_ID} .ksso-question-score {
+        display: grid;
+        justify-items: center;
+        gap: 6px;
         color: #1f2937;
-        font-size: 11px;
+      }
+      #${ROOT_ID} .ksso-question-score-value {
+        font-size: 42px;
         font-weight: 700;
         line-height: 1;
-        white-space: nowrap;
       }
-      #${ROOT_ID} .ksso-distribution-segment + .ksso-distribution-segment {
-        border-left: 2px solid #ffffff;
+      #${ROOT_ID} .ksso-question-score-stars .ksso-stars {
+        font-size: 16px;
       }
       #${ROOT_ID} .ksso-comments {
         border-top: 1px solid #eef2f7;
@@ -579,6 +919,18 @@
         #${ROOT_ID} .ksso-questions {
           grid-template-columns: 1fr;
         }
+        #${ROOT_ID} .ksso-metric--overall .ksso-rating-number {
+          font-size: 36px;
+        }
+        #${ROOT_ID} .ksso-question-overview {
+          grid-template-columns: 1fr;
+        }
+        #${ROOT_ID} .ksso-question-score {
+          justify-items: start;
+        }
+        #${ROOT_ID} .ksso-question-score-value {
+          font-size: 34px;
+        }
         #${ROOT_ID} .ksso-top {
           align-items: flex-start;
           flex-direction: column;
@@ -594,7 +946,9 @@
     injectStyle();
 
     const evaluation = match.evaluation;
-    const questions = Array.isArray(evaluation.questions) ? evaluation.questions : [];
+    const questions = Array.isArray(evaluation.questions)
+      ? evaluation.questions
+      : [];
     const q7 = questions.find((question) => question.index === 7);
     const total = questions[0] ? choiceTotal(questions[0].counts || []) : null;
     const root = document.createElement("section");
@@ -605,9 +959,15 @@
         <div class="ksso-meta">K-Support / 照合スコア ${match.score}</div>
       </div>
       <div class="ksso-summary">
-        <div class="ksso-metric"><span class="ksso-label">総合満足度</span><span class="ksso-value">${renderRating(q7?.avg)}</span></div>
-        <div class="ksso-metric"><span class="ksso-label">回答率</span><span class="ksso-value">${formatPercent(evaluation.course?.answerPercent)}</span></div>
-        <div class="ksso-metric"><span class="ksso-label">回答数</span><span class="ksso-value">${total || "-"}</span></div>
+        <div class="ksso-metric ksso-metric--overall">
+          <span class="ksso-label">総合満足度</span>
+          <span class="ksso-value">${renderRating(q7?.avg)}</span>
+          <div class="ksso-metric--responses">
+            <div class="ksso-response-row"><span class="ksso-response-name">回答率</span><span class="ksso-response-value">${formatPercent(evaluation.course?.answerPercent)}</span></div>
+            <div class="ksso-response-row"><span class="ksso-response-name">回答数</span><span class="ksso-response-value">${typeof total === "number" ? `${total}件` : "-"}</span></div>
+          </div>
+        </div>
+        <div class="ksso-faculty-profile-slot" data-ksso-faculty-profile hidden></div>
       </div>
       ${renderLegend()}
       <ul class="ksso-questions">
@@ -616,12 +976,16 @@
       ${renderCommentSections(evaluation.commentSections)}
     `;
 
-    const anchor = document.querySelector(".syllabus-header") || document.querySelector("#screen-detail") || document.body;
+    const anchor =
+      document.querySelector(".syllabus-header") ||
+      document.querySelector("#screen-detail") ||
+      document.body;
     if (anchor === document.body) {
       document.body.prepend(root);
     } else {
       anchor.insertAdjacentElement("afterend", root);
     }
+    void hydrateFacultyProfile(root, match.syllabus || {}, evaluation);
   }
 
   function mountRoot() {
@@ -630,7 +994,10 @@
     if (root) return root;
     root = document.createElement("section");
     root.id = ROOT_ID;
-    const anchor = document.querySelector(".syllabus-header") || document.querySelector("#screen-detail") || document.body;
+    const anchor =
+      document.querySelector(".syllabus-header") ||
+      document.querySelector("#screen-detail") ||
+      document.body;
     if (anchor === document.body) {
       document.body.prepend(root);
     } else {
@@ -643,10 +1010,14 @@
     const root = mountRoot();
     const actions = [];
     if (options.openKSupport) {
-      actions.push(`<button type="button" class="ksso-button" data-ksso-action="open-ksupport">${escapeHtml(options.openKSupportLabel || "K-Supportを開く")}</button>`);
+      actions.push(
+        `<button type="button" class="ksso-button" data-ksso-action="open-ksupport">${escapeHtml(options.openKSupportLabel || "K-Supportを開く")}</button>`,
+      );
     }
     if (options.retry) {
-      actions.push('<button type="button" class="ksso-button" data-ksso-action="retry">再取得</button>');
+      actions.push(
+        '<button type="button" class="ksso-button" data-ksso-action="retry">再取得</button>',
+      );
     }
     root.innerHTML = `
       <div class="ksso-top">
@@ -676,96 +1047,148 @@
     if (!Array.isArray(candidates) || !candidates.length) return "";
     return candidates
       .slice(0, 3)
-      .map((course) => `${course.courseName || "-"} / ${course.lecturer || "-"} / ${course.semester || "-"} / score ${course.score ?? "-"}`)
+      .map(
+        (course) =>
+          `${course.courseName || "-"} / ${course.lecturer || "-"} / ${course.semester || "-"} / score ${course.score ?? "-"}`,
+      )
       .join("\n");
   }
 
   function isKSupportConnectionError(response) {
     const code = response?.code || "";
     const message = response?.message || "";
-    return code === "TAB_MESSAGE_FAILED"
-      || code === "KSUPPORT_TABS_UNAVAILABLE"
-      || /Receiving end does not exist|Could not establish connection/i.test(message);
+    return (
+      code === "TAB_MESSAGE_FAILED" ||
+      code === "KSUPPORT_TABS_UNAVAILABLE" ||
+      code === "RUNTIME_MESSAGE_TIMEOUT" ||
+      /Receiving end does not exist|Could not establish connection/i.test(
+        message,
+      )
+    );
+  }
+
+  function isKSupportAuthError(response) {
+    const text = `${response?.code || ""} ${response?.message || ""}`;
+    return (
+      /Sp_CourseEvaluationSearchController/.test(text) &&
+      /アクセス権|access|permission|権限/i.test(text)
+    );
   }
 
   async function fetchAndRender(syllabus) {
-    renderStatus("授業評価", "K-Support から授業評価を取得中です...");
-    const response = await runtimeMessage({
-      type: "keioSurvey.fetchEvaluationForSyllabus",
-      syllabus
-    });
+    renderStatus("授業評価", "K-Support でこの授業の評価を探しています...");
+    const response = await runtimeMessage(
+      {
+        type: "keioSurvey.fetchEvaluationForSyllabus",
+        syllabus,
+      },
+      { timeoutMs: FETCH_TIMEOUT_MS },
+    );
 
     if (response?.ok && response.evaluation) {
       await saveEvaluation(response.evaluation);
       renderOverlay({
-        evaluation: normalizeEvaluation(response.evaluation, { includeComments: true }),
-        score: response.match?.score ?? scoreCourseMatch(syllabus, response.evaluation.course || {})
+        syllabus,
+        evaluation: normalizeEvaluation(response.evaluation, {
+          includeComments: true,
+        }),
+        score:
+          response.match?.score ??
+          scoreCourseMatch(syllabus, response.evaluation.course || {}),
       });
       return;
     }
 
     if (isKSupportConnectionError(response)) {
-      renderStatus("授業評価", [
-        "K-Support との接続が切れています。",
-        "K-Support を開いてログイン、または K-Support タブを再読み込みしてから、このページで再取得してください。"
-      ].join("\n"), {
-        openKSupport: true,
-        openKSupportLabel: "K-Supportでログイン",
-        retry: true,
-        error: true
-      });
+      renderStatus(
+        "授業評価",
+        [
+          "保存済みの評価はまだありません。",
+          "評価を見るには K-Support にログインしてから再取得してください。",
+        ].join("\n"),
+        {
+          openKSupport: true,
+          openKSupportLabel: "K-Supportでログイン",
+          retry: true,
+        },
+      );
       return;
     }
 
     if (response?.code === "KSUPPORT_TAB_NOT_FOUND") {
-      renderStatus("授業評価", "ログイン済みの K-Support タブが見つかりません。K-Support を開いてログイン後、このページで再取得してください。", {
-        openKSupport: true,
-        openKSupportLabel: "K-Supportでログイン",
-        retry: true,
-        error: true
-      });
+      renderStatus(
+        "授業評価",
+        "保存済みの評価はまだありません。K-Support にログインすると、この授業の評価を探せます。",
+        {
+          openKSupport: true,
+          openKSupportLabel: "K-Supportでログイン",
+          retry: true,
+        },
+      );
       return;
     }
 
-    if (response?.code === "KSUPPORT_CONTEXT_MISSING" || response?.code === "KSUPPORT_CONTEXT_EXPIRED") {
-      renderStatus("授業評価", "K-Support の認証情報が古いか、まだ取得できていません。K-Support タブを再読み込みしてから再取得してください。", {
-        openKSupport: true,
-        openKSupportLabel: "K-Supportでログイン",
-        retry: true,
-        error: true
-      });
+    if (
+      response?.code === "KSUPPORT_CONTEXT_MISSING" ||
+      response?.code === "KSUPPORT_CONTEXT_EXPIRED" ||
+      isKSupportAuthError(response)
+    ) {
+      renderStatus(
+        "授業評価",
+        "K-Support のログイン状態を確認できませんでした。K-Support を開くか再読み込みしてから再取得してください。",
+        {
+          openKSupport: true,
+          openKSupportLabel: "K-Supportでログイン",
+          retry: true,
+        },
+      );
       return;
     }
 
     if (response?.code === "NO_MATCH") {
       const summary = candidateSummary(response.candidates);
-      renderStatus("授業評価", `一致する授業評価を見つけられませんでした。${summary ? `\n候補:\n${summary}` : ""}`, {
-        retry: true,
-        error: true
-      });
+      renderStatus(
+        "授業評価",
+        `この授業に対応する公開評価は見つかりませんでした。${summary ? `\n近い候補:\n${summary}` : ""}`,
+        {
+          retry: true,
+        },
+      );
       return;
     }
 
-    renderStatus("授業評価", response?.message || "授業評価の取得に失敗しました。", {
-      retry: true,
-      error: true
-    });
+    renderStatus(
+      "授業評価",
+      response?.message || "授業評価の取得に失敗しました。",
+      {
+        retry: true,
+        error: true,
+      },
+    );
   }
 
   async function main() {
+    if (!isSyllabusDetailPage()) return;
+
     const syllabus = parseSyllabusCourse();
-    if (!syllabus.courseName) {
-      renderStatus("授業評価", "シラバスから科目名を読み取れませんでした。", { error: true });
+    if (!syllabus.courseName || !hasCourseIdentity(syllabus)) {
+      renderStatus("授業評価", "シラバスから科目名を読み取れませんでした。", {
+        error: true,
+      });
       return;
     }
     bindActions(syllabus);
 
     const current = await storageGet({ [STORAGE_KEYS.evaluations]: {} });
-    const match = findBestEvaluation(syllabus, uniqueEvaluations(current[STORAGE_KEYS.evaluations]));
+    const cachedEvaluations = await cacheGetAll("evaluations").catch(() => []);
+    const match = findBestEvaluation(syllabus, [
+      ...cachedEvaluations,
+      ...uniqueEvaluations(current[STORAGE_KEYS.evaluations]),
+    ]);
     if (match) {
-      renderOverlay(match);
+      renderOverlay({ ...match, syllabus });
     } else {
-      renderStatus("授業評価", "保存済み評価は未検出です。K-Support から取得します...");
+      renderStatus("授業評価", "保存済みの評価を確認中です...");
     }
     void fetchAndRender(syllabus);
   }

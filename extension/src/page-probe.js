@@ -39,6 +39,48 @@
     globals: {},
     uad: true
   };
+  const DEFAULT_SYNC_CAMPUSES = [
+    "三田",
+    "日吉",
+    "矢上",
+    "信濃町",
+    "湘南藤沢",
+    "芝共立",
+    "新川崎",
+    "その他"
+  ];
+  const DEFAULT_SYNC_FACULTIES = [
+    "文学部",
+    "経済学部",
+    "法学部",
+    "商学部",
+    "医学部",
+    "理工学部",
+    "総合政策・環境情報学部",
+    "看護医療学部",
+    "薬学部",
+    "文学研究科",
+    "経済学研究科",
+    "法学研究科",
+    "社会学研究科",
+    "商学研究科",
+    "医学研究科",
+    "理工学研究科",
+    "政策・メディア研究科",
+    "健康マネジメント研究科",
+    "薬学研究科",
+    "経営管理研究科",
+    "システムデザイン・マネジメント研究科",
+    "メディアデザイン研究科",
+    "法務研究科",
+    "通信教育課程",
+    "日本語・日本文化教育センター"
+  ];
+  const DEFAULT_SYNC_SEMESTERS = [
+    "2025年春学期",
+    "2025年秋学期"
+  ];
+  const SEARCH_RESULT_CAP = 1500;
 
   let lastAuraRequest = null;
   let nextAuraRequestNumber = Math.floor(Math.random() * 1000) + 1000;
@@ -151,8 +193,26 @@
     if (params.has("message")) out.auraMessage = extractAuraMessage(params.get("message"));
     if (params.has("aura.context")) out.hasAuraContext = true;
     if (params.has("aura.token")) out.hasAuraToken = true;
+    rememberDebugAuraMessage(params);
     rememberAuraRequest(params);
     return out;
+  }
+
+  function rememberDebugAuraMessage(params) {
+    const message = params.get("message") || "";
+    if (!/FlowRuntime|Sp_CeCommentList|flowCommunity/i.test(message)) return;
+    try {
+      window.__keioSurveyDebugAura = Array.isArray(window.__keioSurveyDebugAura) ? window.__keioSurveyDebugAura : [];
+      window.__keioSurveyDebugAura.push({
+        at: new Date().toISOString(),
+        actionFlag: [...params.keys()].find((key) => key !== "message" && key !== "aura.context" && key !== "aura.token" && key !== "aura.pageURI") || "",
+        pageURI: params.get("aura.pageURI") || "",
+        message: JSON.parse(message)
+      });
+      window.__keioSurveyDebugAura = window.__keioSurveyDebugAura.slice(-20);
+    } catch {
+      // Debug capture is best-effort only.
+    }
   }
 
   function rememberAuraRequest(params) {
@@ -165,6 +225,17 @@
       pageURI: params.get("aura.pageURI") || location.pathname,
       capturedAt: Date.now()
     };
+    emit({
+      phase: "session",
+      transport: "aura",
+      kind: "ksupport.auraSession",
+      context: auraContext,
+      token: auraToken,
+      pageURI: lastAuraRequest.pageURI,
+      capturedAt: lastAuraRequest.capturedAt,
+      origin: location.origin,
+      at: new Date().toISOString()
+    });
   }
 
   function asNumber(value) {
@@ -219,6 +290,16 @@
       }
     }
     return null;
+  }
+
+  function emitSyncProgress(progress) {
+    emit({
+      phase: "progress",
+      transport: "aura",
+      kind: "ksupport.syncProgress",
+      at: new Date().toISOString(),
+      ...progress
+    });
   }
 
   function extractRecordContainer(globalValueProvider) {
@@ -291,6 +372,16 @@
       kind: "other",
       title: "その他、科目に関するご意見・ご感想など自由にお書きください。",
       en: "Please let us know if you have any requests or opinions."
+    },
+    {
+      kind: "other",
+      title: "この授業についての意見、感想や印象に残ったことを記入してください。またあなたが考える、授業をより良くするアイディアがあれば教えてください。",
+      en: "Please describe your opinions, thoughts or impressions about this class. In addition, please write any ideas you have that would improve the class."
+    },
+    {
+      kind: "positive",
+      title: "この授業で学んだ考え方や知識は、あなたの研究や実践を進める上でどのように役立つと思いますか？",
+      en: "How do you think that the idea and knowledge you learned in this course will help your research or practical work?"
     }
   ];
 
@@ -314,7 +405,7 @@
         .replace(section.en, "")
         .split("\n")
         .map((line) => line.trim())
-        .filter(Boolean)
+        .filter(isLikelyCommentLine)
         .slice(0, 30);
       return {
         kind: section.kind,
@@ -323,6 +414,45 @@
         comments: body
       };
     }).filter((section) => section.comments.length);
+  }
+
+  function isLikelyCommentLine(line) {
+    const text = normalizeText(line);
+    if (!text) return false;
+    if (COMMENT_SECTIONS.some((section) => text === section.title || text === section.en)) return false;
+    if (text === "完了" || /^finish$/i.test(text)) return false;
+    if (/^(true|false|null|undefined)$/i.test(text)) return false;
+    if (/^\d+$/.test(text)) return false;
+    if (/^(top|bottom|left|right|STRING|DISPLAY_TEXT|PROD|c|\$Global)$/i.test(text)) return false;
+    if (/^StudentComment\d+$/i.test(text)) return false;
+    if (/^\$F\./.test(text)) return false;
+    if (/^\/students(?:\/|$)|^\/sfsites(?:\/|$)|^siteforce:/i.test(text)) return false;
+    if (/^com\.salesforce\./i.test(text)) return false;
+    if (/^markup:\/\//i.test(text)) return false;
+    if (/^(core|interop)$/i.test(text)) return false;
+    if (/^\d+_[A-Za-z0-9_-]{10,}$/.test(text)) return false;
+    if (/^[A-Za-z0-9_-]{48,}$/.test(text)) return false;
+    if (/^["'{}[\],:]+$/.test(text)) return false;
+    if (/^[-–—・•]+$/.test(text)) return false;
+    if (/^\{?["']?(outputs|isRequired|regionContainerType|helpText|metadataValues|inputs|dataType|errorMessage|isReactiveOnInit|label|styleProperties|isReadOnly|name|triggersUpdate|isDisabled|choices|contextMap|fields|value|fieldType|visibilityRule|templateField|valueSources|actions|errors|context|perfSummary)["']?\s*:/i.test(text)) return false;
+    if (/"(styleProperties|isReadOnly|contextMap|visibilityRule|templateField|valueSources|globalValueProviders|perfSummary|FlowRuntime|FlowRuntimeConnect|screen|flowDevName)"/i.test(text)) return false;
+    if ((text.match(/":/g) || []).length >= 3) return false;
+    return true;
+  }
+
+  function collectFlowText(value, labels = []) {
+    if (typeof value === "string") {
+      const text = value.trim();
+      if (text) labels.push(text);
+      return labels;
+    }
+    if (!value || typeof value !== "object") return labels;
+    if (Array.isArray(value)) {
+      for (const item of value) collectFlowText(item, labels);
+      return labels;
+    }
+    for (const child of Object.values(value)) collectFlowText(child, labels);
+    return labels;
   }
 
   async function extractCommentsFromDocument(doc) {
@@ -335,52 +465,49 @@
     return parseCommentSections(relevant);
   }
 
+  function extractCommentsFromFlowPayload(payload) {
+    const labels = collectFlowText(payload);
+    const structuredText = labels.join("\n")
+      .replace(/\\n/g, "\n")
+      .replace(/\\"/g, "\"")
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<[^>]*>/g, "\n");
+    const structuredSections = parseCommentSections(structuredText);
+    if (structuredSections.length) return structuredSections;
+
+    const text = JSON.stringify(payload || {})
+      .replace(/\\n/g, "\n")
+      .replace(/\\"/g, "\"")
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<[^>]*>/g, "\n");
+    return parseCommentSections(text);
+  }
+
+  async function fetchEvaluationCommentsViaFlow(recordId) {
+    const detailPageURI = `/students/s/course-offering-schedule/${recordId}/csh163408`;
+    const payload = await postAura(
+      "aura.FlowRuntimeConnect.startFlow",
+      commentFlowMessage(recordId),
+      detailPageURI
+    );
+    return extractCommentsFromFlowPayload(payload);
+  }
+
   async function fetchEvaluationComments(recordId) {
     if (!recordId) return [];
-    const currentPath = `/students/s/course-offering-schedule/${recordId}/csh163408`;
-    const canReadCurrentPage = window.location.pathname === currentPath;
+    try {
+      const apiComments = await fetchEvaluationCommentsViaFlow(recordId);
+      if (apiComments.length) return apiComments;
+    } catch {
+      // Flow comments are best-effort; fall back to same-origin detail rendering.
+    }
+    const currentPathPrefix = `/students/s/course-offering-schedule/${recordId}/`;
+    const canReadCurrentPage = window.location.pathname.startsWith(currentPathPrefix);
     if (canReadCurrentPage) {
       const currentComments = await extractCommentsFromDocument(document);
       if (currentComments.length) return currentComments;
     }
-
-    return new Promise((resolve) => {
-      const iframe = document.createElement("iframe");
-      let finished = false;
-      const startedAt = Date.now();
-
-      function finish(comments) {
-        if (finished) return;
-        finished = true;
-        clearInterval(timer);
-        iframe.remove();
-        resolve(comments);
-      }
-
-      iframe.style.cssText = "position:absolute;width:1px;height:1px;left:-10000px;top:0;opacity:0;pointer-events:none;border:0";
-      iframe.setAttribute("aria-hidden", "true");
-      iframe.src = currentPath;
-
-      const timer = setInterval(async () => {
-        if (Date.now() - startedAt > 15000) {
-          finish([]);
-          return;
-        }
-        try {
-          const doc = iframe.contentDocument;
-          if (!doc?.body) return;
-          const text = doc.body.innerText || "";
-          if (!text.includes(COMMENT_SECTIONS[0].title)) return;
-          const comments = await extractCommentsFromDocument(doc);
-          if (comments.length) finish(comments);
-        } catch {
-          finish([]);
-        }
-      }, 500);
-
-      iframe.addEventListener("error", () => finish([]));
-      document.body.appendChild(iframe);
-    });
+    return [];
   }
 
   function emitExtractedAuraData(text, requestId) {
@@ -590,6 +717,34 @@
     };
   }
 
+  function commentFlowMessage(recordId) {
+    return {
+      actions: [
+        {
+          id: `${Date.now()};a`,
+          descriptor: "aura://FlowRuntimeConnectController/ACTION$startFlow",
+          callingDescriptor: "UNKNOWN",
+          params: {
+            flowDevName: "Sp_CeCommentList",
+            arguments: JSON.stringify([
+              {
+                name: "recordId",
+                type: "String",
+                supportsRecordId: true,
+                value: recordId
+              }
+            ]),
+            debugAsUserId: "",
+            enableRollbackMode: false,
+            enableTrace: false,
+            isBuilderDebug: false,
+            useLatestSubflow: false
+          }
+        }
+      ]
+    };
+  }
+
   function criteriaFromSyllabus(syllabus) {
     return {
       courseName: normalizeText(syllabus.courseName),
@@ -607,6 +762,354 @@
       if (!best || score > best.score) best = { course, score };
     }
     return best;
+  }
+
+  async function fetchEvaluationByRecordId(recordId, options = {}) {
+    const detailPageURI = `/students/s/course-offering-schedule/${recordId}/csh163408`;
+    const detailPayloadPromise = postAura(
+      "ui-force-components-controllers-recordGlobalValueProvider.RecordGvp.getRecord",
+      evaluationMessage(recordId),
+      detailPageURI
+    );
+    const commentsPromise = options.includeComments === false ? Promise.resolve([]) : fetchEvaluationComments(recordId);
+    const detailPayload = await detailPayloadPromise;
+    const evaluation = extractEvaluationAggregate(detailPayload);
+    if (!evaluation) {
+      const error = new Error("K-Support の評価集計レスポンスを解析できませんでした。");
+      error.code = "EVALUATION_PARSE_FAILED";
+      throw error;
+    }
+    evaluation.commentSections = await commentsPromise;
+    emit({
+      phase: "data",
+      transport: "aura",
+      requestId: `sync-${recordId}-${Date.now()}`,
+      ...evaluation
+    });
+    return evaluation;
+  }
+
+  function syncCriteria(criteria = {}) {
+    return {
+      courseName: "",
+      mainLecturer: "",
+      semester: "",
+      campus: "",
+      faculty: "",
+      ...criteria
+    };
+  }
+
+  async function searchCoursesByCriteria(criteria, maxPages, requestPrefix) {
+    const courses = [];
+    let totalCount = null;
+    let pageCount = 0;
+
+    for (let pageNumber = 1; pageNumber <= maxPages; pageNumber += 1) {
+      const searchPayload = await postAura(
+        "aura.ApexAction.execute",
+        searchMessage(criteria, pageNumber),
+        "/students/s/ClassEvaluationSearch"
+      );
+      const search = extractSearchCourses(searchPayload) || { courses: [] };
+      const pageCourses = search.courses || [];
+      if (!pageCourses.length) break;
+      pageCount += 1;
+      if (search.totalCount != null) totalCount = search.totalCount;
+      courses.push(...pageCourses);
+      emit({
+        phase: "data",
+        transport: "aura",
+        requestId: `${requestPrefix}-${pageNumber}-${Date.now()}`,
+        kind: "ksupport.searchCourses",
+        totalCount,
+        courses: pageCourses
+      });
+      if (totalCount != null && courses.length >= totalCount) break;
+    }
+
+    return {
+      criteria,
+      courses,
+      pageCount,
+      totalCount,
+      capped: totalCount != null && totalCount >= SEARCH_RESULT_CAP
+    };
+  }
+
+  function isSearchTooBroadError(error) {
+    const text = String(error?.message || error || "");
+    return /1,?500|1500|検索結果.*超|検索条件.*絞/i.test(text);
+  }
+
+  function syncSearchSegments(payload, baseCriteria) {
+    if (payload.partitionByCampus === false || normalizeText(baseCriteria.campus)) {
+      return [baseCriteria];
+    }
+    const campuses = Array.isArray(payload.campuses) && payload.campuses.length
+      ? payload.campuses
+      : DEFAULT_SYNC_CAMPUSES;
+    return campuses.map((campus) => ({
+      ...baseCriteria,
+      campus: normalizeText(campus)
+    }));
+  }
+
+  function nextSearchSegments(payload, criteria) {
+    if (payload.partitionBySemester !== false && !normalizeText(criteria.semester)) {
+      const semesters = Array.isArray(payload.semesters) && payload.semesters.length
+        ? payload.semesters
+        : DEFAULT_SYNC_SEMESTERS;
+      return semesters.map((semester) => ({
+        ...criteria,
+        semester: normalizeText(semester)
+      }));
+    }
+
+    if (payload.partitionByFaculty !== false && !normalizeText(criteria.faculty)) {
+      const faculties = Array.isArray(payload.faculties) && payload.faculties.length
+        ? payload.faculties
+        : DEFAULT_SYNC_FACULTIES;
+      return faculties.map((faculty) => ({
+        ...criteria,
+        faculty: normalizeText(faculty)
+      }));
+    }
+
+    return [];
+  }
+
+  async function searchCoursesWithFallback(criteria, maxPages, requestPrefix, payload) {
+    try {
+      const result = await searchCoursesByCriteria(criteria, maxPages, requestPrefix);
+      if (!result.capped) return [result];
+      const subCriteria = nextSearchSegments(payload, criteria);
+      if (!subCriteria.length) return [result];
+      const subResults = [];
+      for (const [index, childCriteria] of subCriteria.entries()) {
+        subResults.push(...await searchCoursesWithFallback(childCriteria, maxPages, `${requestPrefix}-split-${index + 1}`, payload));
+      }
+      return subResults;
+    } catch (error) {
+      if (!isSearchTooBroadError(error)) throw error;
+      const subCriteria = nextSearchSegments(payload, criteria);
+      if (!subCriteria.length) throw error;
+      const subResults = [];
+      for (const [index, childCriteria] of subCriteria.entries()) {
+        subResults.push(...await searchCoursesWithFallback(childCriteria, maxPages, `${requestPrefix}-split-${index + 1}`, payload));
+      }
+      return subResults;
+    }
+  }
+
+  async function syncAllEvaluations(payload = {}) {
+    const baseCriteria = syncCriteria(payload.criteria || {});
+    const includeComments = payload.includeComments !== false;
+    const maxPages = Number(payload.maxPages) > 0 ? Number(payload.maxPages) : 200;
+    const maxDetails = Number(payload.maxDetails) === 0
+      ? 0
+      : Number(payload.maxDetails) > 0
+        ? Number(payload.maxDetails)
+        : Infinity;
+    const detailConcurrency = Math.max(1, Math.min(8, Number(payload.detailConcurrency) || 4));
+    const searchOnly = Boolean(payload.searchOnly) || maxDetails === 0;
+    const cachedEvaluationRecordIds = new Set(
+      Array.isArray(payload.cachedEvaluationRecordIds)
+        ? payload.cachedEvaluationRecordIds.map((recordId) => normalizeText(recordId)).filter(Boolean)
+        : []
+    );
+    const forceRefresh = Boolean(payload.forceRefresh);
+    const cachedEvaluationCount = forceRefresh ? 0 : cachedEvaluationRecordIds.size;
+    const courses = [];
+    const segmentSummaries = [];
+    const progressBase = {
+      state: "running",
+      targetFaculty: baseCriteria.faculty || "",
+      startedAt: new Date().toISOString()
+    };
+
+    emitSyncProgress({
+      ...progressBase,
+      phaseName: "searching",
+      message: "K-Support の検索条件を分割しています。",
+      searchExpectedTotal: null,
+      searchFoundRaw: 0,
+      searchFoundUnique: 0,
+      segmentsDone: 0,
+      cappedSegmentsCount: 0,
+      detailTotal: null,
+      detailFetched: cachedEvaluationCount,
+      detailCached: cachedEvaluationCount,
+      detailFailed: 0
+    });
+
+    for (const [index, criteria] of syncSearchSegments(payload, baseCriteria).entries()) {
+      const results = await searchCoursesWithFallback(criteria, maxPages, `sync-search-${index + 1}`, payload);
+      for (const result of results) {
+        courses.push(...result.courses);
+        segmentSummaries.push({
+          criteria: result.criteria,
+          totalCount: result.totalCount,
+          pageCount: result.pageCount,
+          fetchedCount: result.courses.length,
+          capped: result.capped
+        });
+        const seenDuringSearch = new Set(courses.map((course) => course.recordId).filter(Boolean));
+        emitSyncProgress({
+          ...progressBase,
+          phaseName: "searching",
+          message: `${result.criteria.campus || "全キャンパス"}${result.criteria.faculty ? ` / ${result.criteria.faculty}` : ""} を確認しました。`,
+          searchExpectedTotal: segmentSummaries.reduce((sum, segment) => sum + (Number.isFinite(segment.totalCount) ? segment.totalCount : 0), 0),
+          searchFoundRaw: courses.length,
+          searchFoundUnique: seenDuringSearch.size,
+          segmentsDone: segmentSummaries.length,
+          cappedSegmentsCount: segmentSummaries.filter((segment) => segment.capped).length,
+          detailTotal: null,
+          detailFetched: cachedEvaluationCount,
+          detailCached: cachedEvaluationCount,
+          detailFailed: 0
+        });
+      }
+    }
+
+    const seen = new Set();
+    const uniqueCourses = courses.filter((course) => {
+      if (!course.recordId || seen.has(course.recordId)) return false;
+      seen.add(course.recordId);
+      return true;
+    });
+    const searchExpectedTotal = segmentSummaries.reduce((sum, segment) => sum + (Number.isFinite(segment.totalCount) ? segment.totalCount : 0), 0);
+    const cappedSegments = segmentSummaries.filter((segment) => segment.capped);
+    const coverageComplete = cappedSegments.length === 0;
+    const cachedDetailCount = forceRefresh
+      ? 0
+      : uniqueCourses.filter((course) => cachedEvaluationRecordIds.has(course.recordId)).length;
+    const coursesNeedingDetail = forceRefresh
+      ? uniqueCourses
+      : uniqueCourses.filter((course) => !cachedEvaluationRecordIds.has(course.recordId));
+
+    emitSyncProgress({
+      ...progressBase,
+      state: searchOnly ? "complete" : "running",
+      phaseName: searchOnly ? "complete" : "details",
+      message: searchOnly
+        ? "検索カバレッジ確認が完了しました。"
+        : coursesNeedingDetail.length
+          ? "未保存の評価詳細と自由記述を取得しています。"
+          : "保存済みデータを確認しました。追加取得はありません。",
+      searchExpectedTotal,
+      searchFoundRaw: courses.length,
+      searchFoundUnique: uniqueCourses.length,
+      segmentsDone: segmentSummaries.length,
+      cappedSegmentsCount: cappedSegments.length,
+      coverageComplete,
+      detailTotal: uniqueCourses.length,
+      detailFetched: cachedDetailCount,
+      detailCached: cachedDetailCount,
+      detailFailed: 0
+    });
+
+    if (searchOnly) {
+      return {
+        ok: true,
+        kind: "ksupport.syncAllEvaluations",
+        searchOnly: true,
+        targetFaculty: baseCriteria.faculty || "",
+        coverageComplete,
+        searchExpectedTotal,
+        courseCount: uniqueCourses.length,
+        rawCourseCount: courses.length,
+        searchedSegments: segmentSummaries,
+        cappedSegments,
+        fetched: 0,
+        failed: 0,
+        failures: []
+      };
+    }
+
+    const detailCourses = coursesNeedingDetail.slice(0, maxDetails);
+    const detailTotal = uniqueCourses.length;
+    const isLimitedDetailRun = detailCourses.length < coursesNeedingDetail.length;
+    let fetched = cachedDetailCount;
+    let fetchedFromNetwork = 0;
+    let nextDetailIndex = 0;
+    const failures = [];
+    async function fetchOneDetail(course) {
+      try {
+        await fetchEvaluationByRecordId(course.recordId, { includeComments });
+        fetched += 1;
+        fetchedFromNetwork += 1;
+      } catch (error) {
+        failures.push({
+          recordId: course.recordId,
+          courseName: course.courseName,
+          code: error?.code || "DETAIL_FETCH_FAILED",
+          message: String(error?.message || error).slice(0, 200)
+        });
+      }
+      emitSyncProgress({
+        ...progressBase,
+        phaseName: "details",
+        message: course.courseName || "評価詳細を取得しています。",
+        searchExpectedTotal,
+        searchFoundRaw: courses.length,
+        searchFoundUnique: uniqueCourses.length,
+        segmentsDone: segmentSummaries.length,
+        cappedSegmentsCount: cappedSegments.length,
+        coverageComplete,
+        detailTotal,
+        detailFetched: fetched,
+        detailCached: cachedDetailCount,
+        detailFetchedFromNetwork: fetchedFromNetwork,
+        detailFailed: failures.length
+      });
+    }
+
+    async function detailWorker() {
+      while (nextDetailIndex < detailCourses.length) {
+        const course = detailCourses[nextDetailIndex];
+        nextDetailIndex += 1;
+        await fetchOneDetail(course);
+      }
+    }
+
+    const workerCount = Math.min(detailConcurrency, detailCourses.length);
+    await Promise.all(Array.from({ length: workerCount }, () => detailWorker()));
+
+    emitSyncProgress({
+      ...progressBase,
+      state: failures.length ? "complete_with_errors" : "complete",
+      phaseName: "complete",
+      message: isLimitedDetailRun ? "指定件数の同期が完了しました。" : "同期が完了しました。",
+      searchExpectedTotal,
+      searchFoundRaw: courses.length,
+      searchFoundUnique: uniqueCourses.length,
+      segmentsDone: segmentSummaries.length,
+      cappedSegmentsCount: cappedSegments.length,
+      coverageComplete,
+      detailTotal,
+      detailFetched: fetched,
+      detailCached: cachedDetailCount,
+      detailFetchedFromNetwork: fetchedFromNetwork,
+      detailFailed: failures.length
+    });
+
+    return {
+      ok: true,
+      kind: "ksupport.syncAllEvaluations",
+      targetFaculty: baseCriteria.faculty || "",
+      coverageComplete,
+      searchExpectedTotal,
+      courseCount: uniqueCourses.length,
+      rawCourseCount: courses.length,
+      searchedSegments: segmentSummaries,
+      cappedSegments,
+      fetched,
+      cached: cachedDetailCount,
+      fetchedFromNetwork,
+      failed: failures.length,
+      failures: failures.slice(0, 20)
+    };
   }
 
   async function fetchEvaluationForSyllabus(payload) {
@@ -638,19 +1141,7 @@
       };
     }
 
-    const detailPageURI = `/students/s/course-offering-schedule/${best.course.recordId}/csh163408`;
-    const detailPayload = await postAura(
-      "ui-force-components-controllers-recordGlobalValueProvider.RecordGvp.getRecord",
-      evaluationMessage(best.course.recordId),
-      detailPageURI
-    );
-    const evaluation = extractEvaluationAggregate(detailPayload);
-    if (!evaluation) {
-      const error = new Error("K-Support の評価集計レスポンスを解析できませんでした。");
-      error.code = "EVALUATION_PARSE_FAILED";
-      throw error;
-    }
-    evaluation.commentSections = await fetchEvaluationComments(best.course.recordId);
+    const evaluation = await fetchEvaluationByRecordId(best.course.recordId);
 
     return {
       ok: true,
@@ -767,6 +1258,15 @@
         .catch((error) => emitCommandResponse(data.requestId, {
           ok: false,
           code: error?.code || "KSUPPORT_UNKNOWN_ERROR",
+          message: String(error?.message || error).slice(0, 500)
+        }));
+    }
+    if (data.command === "syncAllEvaluations") {
+      syncAllEvaluations(data.payload)
+        .then((response) => emitCommandResponse(data.requestId, response))
+        .catch((error) => emitCommandResponse(data.requestId, {
+          ok: false,
+          code: error?.code || "KSUPPORT_SYNC_ERROR",
           message: String(error?.message || error).slice(0, 500)
         }));
     }

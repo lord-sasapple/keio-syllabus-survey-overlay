@@ -1,49 +1,40 @@
 (() => {
   const {
     STORAGE_KEYS,
+    cacheGetAll,
+    cacheGetMeta,
     compactCourseKey,
+    normalizePerson,
+    normalizeSemester,
     normalizeText,
     scoreCourseMatch,
-    storageGet,
-    storageSet
+    storageGet
   } = window.KeioSurveyShared;
 
   const STYLE_ID = "keio-survey-result-overlay-style";
   const ITEM_SELECTOR = ".search-result-item";
-  const AUTO_FETCH_CONCURRENCY = 2;
-  const autoFetchSeen = new Set();
-  const observedItems = new WeakSet();
-  let activeFetches = 0;
-  let intersectionObserver = null;
-  const fetchQueue = [];
+  const CACHE_REFRESH_MS = 5 * 60 * 1000;
+  const MAX_FALLBACK_CANDIDATES = 40;
 
-  function runtimeMessage(message) {
-    return new Promise((resolve) => {
-      chrome.runtime.sendMessage(message, (response) => {
-        if (chrome.runtime.lastError) {
-          resolve({ ok: false, code: "RUNTIME_MESSAGE_FAILED", message: chrome.runtime.lastError.message });
-          return;
-        }
-        resolve(response || { ok: false, code: "EMPTY_RUNTIME_RESPONSE" });
-      });
-    });
-  }
+  let cacheIndexPromise = null;
+  let cacheIndexLoadedAt = 0;
+  let renderTimer = 0;
 
   function objectStore(value) {
     return value && typeof value === "object" && !Array.isArray(value) ? value : {};
   }
 
-  function uniqueEvaluations(store) {
+  function uniqueByRecordId(values) {
     const seen = new Set();
-    const evaluations = [];
-    for (const value of Object.values(store || {})) {
+    const results = [];
+    for (const value of values || []) {
       if (!value || typeof value !== "object") continue;
       const id = value.recordId || JSON.stringify(value.course || {});
       if (seen.has(id)) continue;
       seen.add(id);
-      evaluations.push(value);
+      results.push(value);
     }
-    return evaluations;
+    return results;
   }
 
   function readDetailMap(item) {
@@ -76,74 +67,205 @@
     };
   }
 
-  function findBestEvaluation(course, evaluations) {
-    let best = null;
+  function courseNameKey(value) {
+    return normalizeText(value);
+  }
+
+  function looseCourseKey(course) {
+    return [
+      normalizeText(course.courseName),
+      normalizePerson(course.lecturer),
+      normalizeSemester(course.semester),
+      normalizeText(course.campus)
+    ].join("|");
+  }
+
+  function addToMapList(map, key, value) {
+    if (!key.replace(/\|/g, "")) return;
+    const list = map.get(key) || [];
+    list.push(value);
+    map.set(key, list);
+  }
+
+  function buildCacheIndex(evaluations) {
+    const exact = new Map();
+    const loose = new Map();
+    const byName = new Map();
+
     for (const evaluation of evaluations) {
+      const course = evaluation.course || {};
+      const exactKey = compactCourseKey(course);
+      if (exactKey.replace(/\|/g, "")) exact.set(exactKey, evaluation);
+      addToMapList(loose, looseCourseKey(course), evaluation);
+      addToMapList(byName, courseNameKey(course.courseName), evaluation);
+    }
+
+    return {
+      exact,
+      loose,
+      byName,
+      count: evaluations.length
+    };
+  }
+
+  function facultyMatches(courseFaculty, selectedFaculty) {
+    const courseValue = normalizeFacultyName(courseFaculty);
+    const selected = normalizeFacultyName(selectedFaculty);
+    if (!selected) return true;
+    if (!courseValue) return false;
+    return courseValue === selected || courseValue.includes(selected) || selected.includes(courseValue);
+  }
+
+  function normalizeFacultyName(value) {
+    const text = normalizeText(value);
+    const compact = text.replace(/[・\s]/g, "");
+    if (!compact) return "";
+    if (/総環|総合政策環境情報|環境情報|総合政策/.test(compact)) return "総合政策環境情報学部";
+    if (/政メ|政策メディア/.test(compact)) return "政策メディア研究科";
+    if (/文学研究科/.test(compact)) return "文学研究科";
+    if (/経済学研究科/.test(compact)) return "経済学研究科";
+    if (/法学研究科/.test(compact)) return "法学研究科";
+    if (/社会学研究科/.test(compact)) return "社会学研究科";
+    if (/商学研究科/.test(compact)) return "商学研究科";
+    if (/医学研究科/.test(compact)) return "医学研究科";
+    if (/理工学研究科/.test(compact)) return "理工学研究科";
+    if (/健康マネジメント研究科/.test(compact)) return "健康マネジメント研究科";
+    if (/薬学研究科/.test(compact)) return "薬学研究科";
+    if (/経営管理研究科/.test(compact)) return "経営管理研究科";
+    if (/システムデザインマネジメント研究科/.test(compact)) return "システムデザインマネジメント研究科";
+    if (/メディアデザイン研究科/.test(compact)) return "メディアデザイン研究科";
+    if (/法務研究科/.test(compact)) return "法務研究科";
+    if (/理工/.test(compact)) return "理工学部";
+    if (/看護/.test(compact)) return "看護医療学部";
+    if (/薬/.test(compact)) return "薬学部";
+    if (/医/.test(compact)) return "医学部";
+    if (/文/.test(compact)) return "文学部";
+    if (/経済/.test(compact)) return "経済学部";
+    if (/法/.test(compact)) return "法学部";
+    if (/商/.test(compact)) return "商学部";
+    return compact;
+  }
+
+  function progressIsRunning(progress) {
+    if (progress?.state !== "running") return false;
+    const updatedAt = Date.parse(progress.updatedAt || progress.at || progress.startedAt || "");
+    return !Number.isFinite(updatedAt) || Date.now() - updatedAt <= 10 * 60 * 1000;
+  }
+
+  function syncCoversFaculty(syncMeta, selectedFaculty) {
+    const sync = syncMeta?.value || syncMeta || {};
+    const targetFaculty = normalizeFacultyName(sync.targetFaculty);
+    const selected = normalizeFacultyName(selectedFaculty);
+    if (!selected) return false;
+    if (!sync.ok && sync.state !== "complete" && sync.state !== "complete_with_errors") return false;
+    return targetFaculty === selected || targetFaculty.includes(selected) || selected.includes(targetFaculty);
+  }
+
+  function completedSyncForFaculty(index, selectedFaculty) {
+    if (syncCoversFaculty(index.syncMeta, selectedFaculty)) return index.syncMeta?.value || index.syncMeta || {};
+    if (syncCoversFaculty(index.progressMeta, selectedFaculty)) return index.progressMeta?.value || index.progressMeta || {};
+    return null;
+  }
+
+  function statusForUnmatchedCourse(course, index) {
+    const selectedFaculty = normalizeText(index.selectedFaculty);
+    if (!selectedFaculty) {
+      return {
+        text: "学部未設定",
+        className: "ksso-result-badge--missing",
+        title: "拡張機能の画面で自分の学部を選ぶと、必要な授業評価だけを確認できます。"
+      };
+    }
+    if (!facultyMatches(course.faculty, selectedFaculty)) {
+      return {
+        text: "学部設定外",
+        className: "ksso-result-badge--missing",
+        title: `現在は ${selectedFaculty} の授業評価だけを確認する設定です。`
+      };
+    }
+    if (progressIsRunning(index.progressMeta?.value)) {
+      return {
+        text: "確認中",
+        className: "ksso-result-badge--loading",
+        title: `${selectedFaculty} の評価データを更新しています。終わるとこの一覧にも反映されます。`
+      };
+    }
+    const completedSync = completedSyncForFaculty(index, selectedFaculty);
+    if (completedSync) {
+      const sync = completedSync;
+      if (sync.coverageComplete === false) {
+        return {
+          text: "一部未確認",
+          className: "ksso-result-badge--loading",
+          title: "検索結果が多すぎた条件があり、この授業の公開評価を確認しきれていない可能性があります。"
+        };
+      }
+      return {
+        text: "公開評価なし",
+        className: "ksso-result-badge--missing",
+        title: "更新済みデータ内に、この授業の公開評価は見つかりませんでした。"
+      };
+    }
+    return {
+      text: "未確認",
+      className: "ksso-result-badge--loading",
+      title: `${selectedFaculty} の評価データはまだ更新されていません。拡張機能の画面から更新すると確認できます。`
+    };
+  }
+
+  async function loadCacheIndex(force = false) {
+    const fresh = cacheIndexPromise && Date.now() - cacheIndexLoadedAt < CACHE_REFRESH_MS;
+    if (!force && fresh) return cacheIndexPromise;
+
+    cacheIndexPromise = Promise.all([
+      cacheGetAll("evaluations").catch(() => []),
+      cacheGetMeta("lastSyncAllEvaluations").catch(() => null),
+      cacheGetMeta("lastSyncProgress").catch(() => null),
+      storageGet({
+        [STORAGE_KEYS.evaluations]: {},
+        [STORAGE_KEYS.settings]: {},
+        [STORAGE_KEYS.lastSyncAllEvaluations]: null,
+        [STORAGE_KEYS.lastSyncProgress]: null
+      }).catch(() => ({
+        [STORAGE_KEYS.evaluations]: {},
+        [STORAGE_KEYS.settings]: {},
+        [STORAGE_KEYS.lastSyncAllEvaluations]: null,
+        [STORAGE_KEYS.lastSyncProgress]: null
+      }))
+    ]).then(([cachedEvaluations, syncMeta, progressMeta, storageState]) => {
+      const storageEvaluations = Object.values(objectStore(storageState[STORAGE_KEYS.evaluations]));
+      const evaluations = uniqueByRecordId([...cachedEvaluations, ...storageEvaluations]);
+      cacheIndexLoadedAt = Date.now();
+      return {
+        ...buildCacheIndex(evaluations),
+        selectedFaculty: normalizeText(storageState[STORAGE_KEYS.settings]?.faculty),
+        syncMeta: syncMeta || (storageState[STORAGE_KEYS.lastSyncAllEvaluations] ? { value: storageState[STORAGE_KEYS.lastSyncAllEvaluations] } : null),
+        progressMeta: progressMeta || (storageState[STORAGE_KEYS.lastSyncProgress] ? { value: storageState[STORAGE_KEYS.lastSyncProgress] } : null)
+      };
+    });
+    return cacheIndexPromise;
+  }
+
+  function bestFromCandidates(course, candidates) {
+    let best = null;
+    for (const evaluation of candidates.slice(0, MAX_FALLBACK_CANDIDATES)) {
       const score = scoreCourseMatch(course, evaluation.course || {});
       if (!best || score > best.score) best = { evaluation, score };
     }
     return best && best.score >= 55 ? best : null;
   }
 
-  function normalizeEvaluation(event) {
-    const course = event.course || {};
-    return {
-      source: "keio-ksupport-ksei",
-      recordId: normalizeText(event.recordId),
-      capturedAt: event.capturedAt || event.at || new Date().toISOString(),
-      course: {
-        recordId: normalizeText(event.recordId || course.recordId),
-        courseName: normalizeText(course.courseName),
-        lecturer: normalizeText(course.lecturer),
-        semester: normalizeText(course.semester),
-        dayPeriod: normalizeText(course.dayPeriod),
-        campus: normalizeText(course.campus),
-        faculty: normalizeText(course.faculty),
-        answerPercent: typeof course.answerPercent === "number" ? course.answerPercent : null
-      },
-      questions: Array.isArray(event.questions)
-        ? event.questions.map((question) => ({
-            index: question.index,
-            ja: normalizeText(question.ja),
-            en: normalizeText(question.en),
-            avg: typeof question.avg === "number" ? question.avg : null,
-            counts: Array.isArray(question.counts) ? question.counts.slice(0, 5).map((count) => Number(count) || 0) : []
-          }))
-        : []
-    };
-  }
+  function findBestEvaluation(course, index) {
+    const exact = index.exact.get(compactCourseKey(course));
+    if (exact) return { evaluation: exact, score: 100 };
 
-  async function saveEvaluation(event) {
-    const evaluation = normalizeEvaluation(event);
-    if (!evaluation.recordId && !evaluation.questions.length) return evaluation;
+    const looseCandidates = index.loose.get(looseCourseKey(course));
+    if (looseCandidates?.length) return bestFromCandidates(course, looseCandidates);
 
-    const current = await storageGet({
-      [STORAGE_KEYS.courses]: {},
-      [STORAGE_KEYS.evaluations]: {}
-    });
-    const courses = objectStore(current[STORAGE_KEYS.courses]);
-    const evaluations = objectStore(current[STORAGE_KEYS.evaluations]);
-    const key = compactCourseKey(evaluation.course);
+    const nameCandidates = index.byName.get(courseNameKey(course.courseName));
+    if (nameCandidates?.length) return bestFromCandidates(course, nameCandidates);
 
-    if (evaluation.recordId) {
-      courses[`record:${evaluation.recordId}`] = { ...evaluation.course, recordId: evaluation.recordId };
-      evaluations[`record:${evaluation.recordId}`] = evaluation;
-    }
-    if (key.replace(/\|/g, "")) {
-      courses[`key:${key}`] = { ...evaluation.course, recordId: evaluation.recordId };
-      evaluations[`key:${key}`] = evaluation;
-    }
-
-    await storageSet({
-      [STORAGE_KEYS.courses]: courses,
-      [STORAGE_KEYS.evaluations]: evaluations,
-      [STORAGE_KEYS.lastSeen]: {
-        url: location.href,
-        title: document.title,
-        at: new Date().toISOString()
-      }
-    });
-    return evaluation;
+    return null;
   }
 
   function formatAvg(value) {
@@ -194,35 +316,19 @@
         background: #fef2f2;
         color: #991b1b;
       }
-      .ksso-result-button {
-        appearance: none;
-        border: 0;
-        padding: 0;
-        background: transparent;
-        color: inherit;
-        font: inherit;
-        font-weight: 700;
-        cursor: pointer;
-      }
-      .ksso-result-button:hover {
-        text-decoration: underline;
-      }
     `;
     document.head.appendChild(style);
   }
 
-  function courseKey(course) {
-    return [course.courseName, course.lecturer, course.semester, course.dayPeriod, course.campus, course.faculty]
-      .map((value) => normalizeText(value))
-      .join("|");
-  }
-
   function removeExistingBadge(item) {
     item.querySelector(".ksso-result-badge")?.remove();
+    item.dataset.kssoBadgeKey = "";
   }
 
-  function insertBadge(item, badge) {
+  function insertBadge(item, badge, key = badge.textContent || badge.className) {
+    if (item.dataset.kssoBadgeKey === key) return;
     removeExistingBadge(item);
+    item.dataset.kssoBadgeKey = key;
     const titleRow = item.querySelector(".mb-2") || item;
     const courseName = titleRow.querySelector(".sbjtnm") || titleRow;
     courseName.insertAdjacentElement("afterend", badge);
@@ -246,128 +352,50 @@
     return badge;
   }
 
-  function renderRetryBadge(course, item, label = "再取得") {
-    const badge = document.createElement("span");
-    badge.className = "ksso-result-badge ksso-result-badge--error";
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "ksso-result-button";
-    button.textContent = label;
-    button.addEventListener("click", () => enqueueFetch(course, item, true));
-    badge.appendChild(button);
-    return badge;
-  }
-
-  function isKSupportAuthError(response) {
-    const code = response?.code || "";
-    return code === "KSUPPORT_TAB_NOT_FOUND"
-      || code === "KSUPPORT_CONTEXT_MISSING"
-      || code === "KSUPPORT_CONTEXT_EXPIRED"
-      || code === "KSUPPORT_TABS_UNAVAILABLE"
-      || code === "TAB_MESSAGE_FAILED";
-  }
-
-  async function fetchAndRender(course, item, force = false) {
-    if (!force && item.dataset.kssoFetched === "1") return;
-    item.dataset.kssoFetched = "1";
-    item.dataset.kssoQueued = "";
-    insertBadge(item, renderStatusBadge("取得中...", "ksso-result-badge--loading"));
-
-    const response = await runtimeMessage({ type: "keioSurvey.fetchEvaluationForSyllabus", syllabus: course });
-    if (response?.ok && response.evaluation) {
-      const evaluation = await saveEvaluation(response.evaluation);
-      insertBadge(item, renderMatchedBadge({
-        evaluation,
-        score: response.match?.score ?? scoreCourseMatch(course, response.evaluation.course || {})
-      }));
-      return;
-    }
-    if (response?.code === "NO_MATCH") {
-      insertBadge(item, renderStatusBadge("評価なし", "ksso-result-badge--missing"));
-      return;
-    }
-    if (isKSupportAuthError(response)) {
-      item.dataset.kssoFetched = "";
-      insertBadge(item, renderRetryBadge(course, item, "K-Supportログイン後に再取得"));
-      return;
-    }
-    item.dataset.kssoFetched = "";
-    insertBadge(item, renderRetryBadge(course, item, "取得失敗 / 再取得"));
-  }
-
-  function runQueue() {
-    while (activeFetches < AUTO_FETCH_CONCURRENCY && fetchQueue.length) {
-      const job = fetchQueue.shift();
-      activeFetches += 1;
-      fetchAndRender(job.course, job.item, job.force)
-        .finally(() => {
-          activeFetches -= 1;
-          runQueue();
-        });
-    }
-  }
-
-  function enqueueFetch(course, item, force = false) {
-    const key = courseKey(course);
-    if (!force && (autoFetchSeen.has(key) || item.dataset.kssoQueued === "1" || item.dataset.kssoFetched === "1")) return;
-    autoFetchSeen.add(key);
-    item.dataset.kssoQueued = "1";
-    fetchQueue.push({ course, item, force });
-    runQueue();
-  }
-
-  function getIntersectionObserver() {
-    if (intersectionObserver) return intersectionObserver;
-    intersectionObserver = new IntersectionObserver((entries) => {
-      for (const entry of entries) {
-        if (!entry.isIntersecting) continue;
-        const item = entry.target;
-        const course = parseResultItem(item);
-        if (!course.courseName) continue;
-        enqueueFetch(course, item);
-      }
-    }, {
-      root: null,
-      rootMargin: "240px 0px 320px 0px",
-      threshold: 0.01
-    });
-    return intersectionObserver;
-  }
-
-  function observeForAutoFetch(item) {
-    if (observedItems.has(item) || item.dataset.kssoFetched === "1") return;
-    observedItems.add(item);
-    getIntersectionObserver().observe(item);
-  }
-
-  async function renderResultList() {
+  async function renderResultList(forceReloadCache = false) {
     ensureStyle();
-    const current = await storageGet({ [STORAGE_KEYS.evaluations]: {} });
-    const evaluations = uniqueEvaluations(objectStore(current[STORAGE_KEYS.evaluations]));
+    const index = await loadCacheIndex(forceReloadCache);
     const items = Array.from(document.querySelectorAll(ITEM_SELECTOR));
 
     for (const item of items) {
       const course = parseResultItem(item);
       if (!course.courseName) continue;
-      const match = findBestEvaluation(course, evaluations);
+      const match = findBestEvaluation(course, index);
       if (match) {
-        insertBadge(item, renderMatchedBadge(match));
-        continue;
+        const overall = findOverallQuestion(match.evaluation);
+        insertBadge(
+          item,
+          renderMatchedBadge(match),
+          `match:${match.evaluation.recordId || compactCourseKey(match.evaluation.course || {})}:${overall?.avg ?? ""}:${match.evaluation.course?.answerPercent ?? ""}`
+        );
+      } else {
+        const status = statusForUnmatchedCourse(course, index);
+        insertBadge(
+          item,
+          renderStatusBadge(status.text, status.className, status.title),
+          `missing:${status.text}:${compactCourseKey(course)}`
+        );
       }
-      if (item.dataset.kssoFetched === "1" || item.dataset.kssoQueued === "1") continue;
-      insertBadge(item, renderStatusBadge("表示時に自動取得", "ksso-result-badge--missing"));
-      observeForAutoFetch(item);
     }
+  }
+
+  function scheduleRender(forceReloadCache = false) {
+    window.clearTimeout(renderTimer);
+    renderTimer = window.setTimeout(() => void renderResultList(forceReloadCache), 300);
   }
 
   function main() {
     void renderResultList();
     const target = document.querySelector("#search-result-timetable") || document.body;
-    const observer = new MutationObserver(() => {
-      window.clearTimeout(observer._kssoTimer);
-      observer._kssoTimer = window.setTimeout(() => void renderResultList(), 250);
-    });
+    const observer = new MutationObserver(() => scheduleRender(false));
     observer.observe(target, { childList: true, subtree: true });
+
+    chrome.storage.onChanged.addListener((changes, areaName) => {
+      if (areaName !== "local") return;
+      if (changes[STORAGE_KEYS.evaluations] || changes[STORAGE_KEYS.lastSyncAllEvaluations] || changes[STORAGE_KEYS.lastSyncProgress]) {
+        scheduleRender(true);
+      }
+    });
   }
 
   main();

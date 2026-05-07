@@ -1,4 +1,7 @@
 (() => {
+  if (window.__keioSurveyProbeBridgeInstalled) return;
+  window.__keioSurveyProbeBridgeInstalled = true;
+
   const { STORAGE_KEYS, storageGet, storageSet } = window.KeioSurveyShared;
   const SOURCE = "keio-survey-page-probe";
   const MAX_EVENTS = 500;
@@ -12,6 +15,25 @@
   }
 
   async function appendEvent(event) {
+    if (event?.kind === "ksupport.auraSession") {
+      await storageSet({
+        [STORAGE_KEYS.ksupportSession]: {
+          context: event.context,
+          token: event.token,
+          pageURI: event.pageURI || "",
+          origin: event.origin || location.origin,
+          capturedAt: event.capturedAt || Date.now(),
+          updatedAt: event.at || new Date().toISOString()
+        },
+        [STORAGE_KEYS.lastSeen]: {
+          url: location.href,
+          title: document.title,
+          at: new Date().toISOString()
+        }
+      });
+      return;
+    }
+
     const current = await storageGet({ [STORAGE_KEYS.networkEvents]: [] });
     const events = Array.isArray(current[STORAGE_KEYS.networkEvents])
       ? current[STORAGE_KEYS.networkEvents]
