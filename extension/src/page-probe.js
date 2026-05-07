@@ -372,6 +372,16 @@
       kind: "other",
       title: "その他、科目に関するご意見・ご感想など自由にお書きください。",
       en: "Please let us know if you have any requests or opinions."
+    },
+    {
+      kind: "other",
+      title: "この授業についての意見、感想や印象に残ったことを記入してください。またあなたが考える、授業をより良くするアイディアがあれば教えてください。",
+      en: "Please describe your opinions, thoughts or impressions about this class. In addition, please write any ideas you have that would improve the class."
+    },
+    {
+      kind: "positive",
+      title: "この授業で学んだ考え方や知識は、あなたの研究や実践を進める上でどのように役立つと思いますか？",
+      en: "How do you think that the idea and knowledge you learned in this course will help your research or practical work?"
     }
   ];
 
@@ -411,6 +421,17 @@
     if (!text) return false;
     if (COMMENT_SECTIONS.some((section) => text === section.title || text === section.en)) return false;
     if (text === "完了" || /^finish$/i.test(text)) return false;
+    if (/^(true|false|null|undefined)$/i.test(text)) return false;
+    if (/^\d+$/.test(text)) return false;
+    if (/^(top|bottom|left|right|STRING|DISPLAY_TEXT|PROD|c|\$Global)$/i.test(text)) return false;
+    if (/^StudentComment\d+$/i.test(text)) return false;
+    if (/^\$F\./.test(text)) return false;
+    if (/^\/students(?:\/|$)|^\/sfsites(?:\/|$)|^siteforce:/i.test(text)) return false;
+    if (/^com\.salesforce\./i.test(text)) return false;
+    if (/^markup:\/\//i.test(text)) return false;
+    if (/^(core|interop)$/i.test(text)) return false;
+    if (/^\d+_[A-Za-z0-9_-]{10,}$/.test(text)) return false;
+    if (/^[A-Za-z0-9_-]{48,}$/.test(text)) return false;
     if (/^["'{}[\],:]+$/.test(text)) return false;
     if (/^[-–—・•]+$/.test(text)) return false;
     if (/^\{?["']?(outputs|isRequired|regionContainerType|helpText|metadataValues|inputs|dataType|errorMessage|isReactiveOnInit|label|styleProperties|isReadOnly|name|triggersUpdate|isDisabled|choices|contextMap|fields|value|fieldType|visibilityRule|templateField|valueSources|actions|errors|context|perfSummary)["']?\s*:/i.test(text)) return false;
@@ -480,8 +501,8 @@
     } catch {
       // Flow comments are best-effort; fall back to same-origin detail rendering.
     }
-    const currentPath = `/students/s/course-offering-schedule/${recordId}/csh163408`;
-    const canReadCurrentPage = window.location.pathname === currentPath;
+    const currentPathPrefix = `/students/s/course-offering-schedule/${recordId}/`;
+    const canReadCurrentPage = window.location.pathname.startsWith(currentPathPrefix);
     if (canReadCurrentPage) {
       const currentComments = await extractCommentsFromDocument(document);
       if (currentComments.length) return currentComments;
@@ -898,6 +919,7 @@
         : []
     );
     const forceRefresh = Boolean(payload.forceRefresh);
+    const cachedEvaluationCount = forceRefresh ? 0 : cachedEvaluationRecordIds.size;
     const courses = [];
     const segmentSummaries = [];
     const progressBase = {
@@ -916,7 +938,8 @@
       segmentsDone: 0,
       cappedSegmentsCount: 0,
       detailTotal: null,
-      detailFetched: 0,
+      detailFetched: cachedEvaluationCount,
+      detailCached: cachedEvaluationCount,
       detailFailed: 0
     });
 
@@ -942,7 +965,8 @@
           segmentsDone: segmentSummaries.length,
           cappedSegmentsCount: segmentSummaries.filter((segment) => segment.capped).length,
           detailTotal: null,
-          detailFetched: 0,
+          detailFetched: cachedEvaluationCount,
+          detailCached: cachedEvaluationCount,
           detailFailed: 0
         });
       }

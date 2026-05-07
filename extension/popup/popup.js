@@ -358,6 +358,7 @@
     setText("evaluation-count", String(evaluationCount));
     setText("comment-count", String(commentsCount));
     setText("last-seen", formatLastSeen(syncMeta?.value) !== "-" ? formatLastSeen(syncMeta.value) : formatLastSeen(state[STORAGE_KEYS.lastSeen]));
+    setText("sync-all", evaluationCount > 0 ? "未保存分を更新" : "評価データを保存");
     if (!progressMeta?.value && (courseCount || evaluationCount)) {
       progressMeta = storageMeta({
         derivedPartial: true,
@@ -431,7 +432,7 @@
     optimisticProgress = storageMeta({
       state: "running",
       phaseName: "starting",
-      message: `${faculty}の授業評価の更新を開始しています。`,
+      message: `${faculty}の未保存分を確認しています。`,
       targetFaculty: faculty,
       startedAt: new Date().toISOString()
     });

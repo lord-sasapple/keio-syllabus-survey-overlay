@@ -12,6 +12,7 @@
 
   const ROOT_ID = "keio-survey-overlay-root";
   const STYLE_ID = "keio-survey-overlay-style";
+  const FETCH_TIMEOUT_MS = 45 * 1000;
   const CHOICE_LABELS = [
     "1 そう思わない",
     "2 あまりそう思わない",
@@ -84,9 +85,24 @@
     );
   }
 
-  function runtimeMessage(message) {
+  function runtimeMessage(message, options = {}) {
+    const timeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : null;
     return new Promise((resolve) => {
+      let settled = false;
+      const timer = timeoutMs
+        ? setTimeout(() => {
+          settled = true;
+          resolve({
+            ok: false,
+            code: "RUNTIME_MESSAGE_TIMEOUT",
+            message: "K-Support から時間内に応答がありませんでした。",
+          });
+        }, timeoutMs)
+        : null;
       chrome.runtime.sendMessage(message, (response) => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
         if (chrome.runtime.lastError) {
           resolve({
             ok: false,
@@ -1043,6 +1059,7 @@
     return (
       code === "TAB_MESSAGE_FAILED" ||
       code === "KSUPPORT_TABS_UNAVAILABLE" ||
+      code === "RUNTIME_MESSAGE_TIMEOUT" ||
       /Receiving end does not exist|Could not establish connection/i.test(
         message,
       )
@@ -1062,7 +1079,7 @@
     const response = await runtimeMessage({
       type: "keioSurvey.fetchEvaluationForSyllabus",
       syllabus,
-    });
+    }, { timeoutMs: FETCH_TIMEOUT_MS });
 
     if (response?.ok && response.evaluation) {
       await saveEvaluation(response.evaluation);
