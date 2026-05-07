@@ -1022,7 +1022,7 @@
     root.innerHTML = `
       <div class="ksso-top">
         <div class="ksso-title">${escapeHtml(title)}</div>
-        <div class="ksso-meta">Keio Survey Overlay</div>
+        <div class="ksso-meta">Syllabus Lens</div>
       </div>
       <div class="${options.error ? "ksso-error" : "ksso-status"}">${escapeHtml(message)}</div>
       ${actions.length ? `<div class="ksso-actions">${actions.join("")}</div>` : ""}
