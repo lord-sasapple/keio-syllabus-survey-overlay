@@ -86,18 +86,19 @@
   }
 
   function runtimeMessage(message, options = {}) {
-    const timeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : null;
+    const timeoutMs =
+      Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : null;
     return new Promise((resolve) => {
       let settled = false;
       const timer = timeoutMs
         ? setTimeout(() => {
-          settled = true;
-          resolve({
-            ok: false,
-            code: "RUNTIME_MESSAGE_TIMEOUT",
-            message: "K-Support から時間内に応答がありませんでした。",
-          });
-        }, timeoutMs)
+            settled = true;
+            resolve({
+              ok: false,
+              code: "RUNTIME_MESSAGE_TIMEOUT",
+              message: "K-Support から時間内に応答がありませんでした。",
+            });
+          }, timeoutMs)
         : null;
       chrome.runtime.sendMessage(message, (response) => {
         if (settled) return;
@@ -368,7 +369,7 @@
           .map(
             (section) => `
           <section class="ksso-comment-section ksso-comment-${escapeHtml(section.kind || "other")}">
-            <h4><span class="ksso-comment-tone" aria-hidden="true"></span>${escapeHtml(section.title)} <span>${escapeHtml(section.en)}</span></h4>
+            <h4><span class="ksso-comment-tone" aria-hidden="true"></span>${escapeHtml(section.title)}</h4>
             <div class="ksso-comment-bubbles">
               ${section.comments.map((comment) => `<p class="ksso-comment-bubble">${escapeHtml(comment)}</p>`).join("")}
             </div>
@@ -1076,10 +1077,13 @@
 
   async function fetchAndRender(syllabus) {
     renderStatus("授業評価", "K-Support でこの授業の評価を探しています...");
-    const response = await runtimeMessage({
-      type: "keioSurvey.fetchEvaluationForSyllabus",
-      syllabus,
-    }, { timeoutMs: FETCH_TIMEOUT_MS });
+    const response = await runtimeMessage(
+      {
+        type: "keioSurvey.fetchEvaluationForSyllabus",
+        syllabus,
+      },
+      { timeoutMs: FETCH_TIMEOUT_MS },
+    );
 
     if (response?.ok && response.evaluation) {
       await saveEvaluation(response.evaluation);
