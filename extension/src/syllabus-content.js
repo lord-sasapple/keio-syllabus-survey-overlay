@@ -56,6 +56,22 @@
     };
   }
 
+  function isSyllabusDetailPage() {
+    const path = location.pathname;
+    if (/\/(?:pub-)?syllabus\/detail(?:\/|$)/.test(path)) return true;
+
+    const url = new URL(location.href);
+    return url.searchParams.has("entno")
+      && Boolean(document.querySelector(".syllabus-header, #screen-detail"));
+  }
+
+  function hasCourseIdentity(syllabus) {
+    return Boolean(
+      syllabus.registrationNumber
+      || (syllabus.courseName && (syllabus.lecturer || syllabus.semester || syllabus.campus))
+    );
+  }
+
   function runtimeMessage(message) {
     return new Promise((resolve) => {
       chrome.runtime.sendMessage(message, (response) => {
@@ -697,7 +713,7 @@
   }
 
   async function fetchAndRender(syllabus) {
-    renderStatus("授業評価", "K-Support から授業評価を取得中です...");
+    renderStatus("授業評価", "K-Support でこの授業の評価を探しています...");
     const response = await runtimeMessage({
       type: "keioSurvey.fetchEvaluationForSyllabus",
       syllabus
@@ -714,42 +730,38 @@
 
     if (isKSupportConnectionError(response)) {
       renderStatus("授業評価", [
-        "K-Support との接続が切れています。",
-        "K-Support を開いてログイン、または K-Support タブを再読み込みしてから、このページで再取得してください。"
+        "保存済みの評価はまだありません。",
+        "評価を見るには K-Support にログインしてから再取得してください。"
       ].join("\n"), {
         openKSupport: true,
         openKSupportLabel: "K-Supportでログイン",
-        retry: true,
-        error: true
+        retry: true
       });
       return;
     }
 
     if (response?.code === "KSUPPORT_TAB_NOT_FOUND") {
-      renderStatus("授業評価", "ログイン済みの K-Support タブが見つかりません。K-Support を開いてログイン後、このページで再取得してください。", {
+      renderStatus("授業評価", "保存済みの評価はまだありません。K-Support にログインすると、この授業の評価を探せます。", {
         openKSupport: true,
         openKSupportLabel: "K-Supportでログイン",
-        retry: true,
-        error: true
+        retry: true
       });
       return;
     }
 
     if (response?.code === "KSUPPORT_CONTEXT_MISSING" || response?.code === "KSUPPORT_CONTEXT_EXPIRED") {
-      renderStatus("授業評価", "K-Support の認証情報が古いか、まだ取得できていません。K-Support タブを再読み込みしてから再取得してください。", {
+      renderStatus("授業評価", "K-Support のログイン状態を確認できませんでした。K-Support を開くか再読み込みしてから再取得してください。", {
         openKSupport: true,
         openKSupportLabel: "K-Supportでログイン",
-        retry: true,
-        error: true
+        retry: true
       });
       return;
     }
 
     if (response?.code === "NO_MATCH") {
       const summary = candidateSummary(response.candidates);
-      renderStatus("授業評価", `一致する授業評価を見つけられませんでした。${summary ? `\n候補:\n${summary}` : ""}`, {
-        retry: true,
-        error: true
+      renderStatus("授業評価", `この授業に対応する公開評価は見つかりませんでした。${summary ? `\n近い候補:\n${summary}` : ""}`, {
+        retry: true
       });
       return;
     }
@@ -761,8 +773,10 @@
   }
 
   async function main() {
+    if (!isSyllabusDetailPage()) return;
+
     const syllabus = parseSyllabusCourse();
-    if (!syllabus.courseName) {
+    if (!syllabus.courseName || !hasCourseIdentity(syllabus)) {
       renderStatus("授業評価", "シラバスから科目名を読み取れませんでした。", { error: true });
       return;
     }
@@ -777,7 +791,7 @@
     if (match) {
       renderOverlay(match);
     } else {
-      renderStatus("授業評価", "保存済み評価は未検出です。K-Support から取得します...");
+      renderStatus("授業評価", "保存済みの評価を確認中です...");
     }
     void fetchAndRender(syllabus);
   }
