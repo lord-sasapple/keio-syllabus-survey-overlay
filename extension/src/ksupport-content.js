@@ -4,6 +4,7 @@
 
   const {
     STORAGE_KEYS,
+    cacheGetAll,
     cachePut,
     cachePutMany,
     cacheSetMeta,
@@ -65,6 +66,26 @@
           })).filter((section) => section.comments.length)
         : []
     };
+  }
+
+  function evaluationRecordId(evaluation) {
+    return normalizeText(evaluation?.recordId || evaluation?.course?.recordId);
+  }
+
+  async function cachedEvaluationRecordIds() {
+    const [indexedEvaluations, current] = await Promise.all([
+      cacheGetAll("evaluations").catch(() => []),
+      storageGet({ [STORAGE_KEYS.evaluations]: {} })
+    ]);
+    const storageEvaluations = Object.values(objectStore(current[STORAGE_KEYS.evaluations]));
+    const ids = new Set();
+
+    for (const evaluation of [...indexedEvaluations, ...storageEvaluations]) {
+      const recordId = evaluationRecordId(evaluation);
+      if (recordId) ids.add(recordId);
+    }
+
+    return [...ids];
   }
 
   async function saveCourses(courses) {
@@ -197,10 +218,13 @@
     if (message?.type === "keioSurvey.syncAllEvaluations") {
       if (syncPromise) return { ok: true, started: false, message: "K-Support sync already running." };
       const targetFaculty = normalizeText(message.options?.criteria?.faculty);
+      const cachedRecordIds = await cachedEvaluationRecordIds();
       await saveSyncProgress({
         state: "running",
         phaseName: "starting",
-        message: "同期を開始しています。",
+        message: cachedRecordIds.length
+          ? "保存済みデータを確認しています。"
+          : "同期を開始しています。",
         targetFaculty,
         startedAt: new Date().toISOString(),
         searchExpectedTotal: null,
@@ -209,10 +233,14 @@
         segmentsDone: 0,
         cappedSegmentsCount: 0,
         detailTotal: null,
-        detailFetched: 0,
+        detailFetched: cachedRecordIds.length,
+        detailCached: cachedRecordIds.length,
         detailFailed: 0
       });
-      syncPromise = pageCommand("syncAllEvaluations", message.options || {})
+      syncPromise = pageCommand("syncAllEvaluations", {
+        ...(message.options || {}),
+        cachedEvaluationRecordIds: cachedRecordIds
+      })
         .then(async (response) => {
           await saveSyncResult({
             ...response,

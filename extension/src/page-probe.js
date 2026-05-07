@@ -890,6 +890,12 @@
         : Infinity;
     const detailConcurrency = Math.max(1, Math.min(8, Number(payload.detailConcurrency) || 4));
     const searchOnly = Boolean(payload.searchOnly) || maxDetails === 0;
+    const cachedEvaluationRecordIds = new Set(
+      Array.isArray(payload.cachedEvaluationRecordIds)
+        ? payload.cachedEvaluationRecordIds.map((recordId) => normalizeText(recordId)).filter(Boolean)
+        : []
+    );
+    const forceRefresh = Boolean(payload.forceRefresh);
     const courses = [];
     const segmentSummaries = [];
     const progressBase = {
@@ -949,12 +955,22 @@
     const searchExpectedTotal = segmentSummaries.reduce((sum, segment) => sum + (Number.isFinite(segment.totalCount) ? segment.totalCount : 0), 0);
     const cappedSegments = segmentSummaries.filter((segment) => segment.capped);
     const coverageComplete = cappedSegments.length === 0;
+    const cachedDetailCount = forceRefresh
+      ? 0
+      : uniqueCourses.filter((course) => cachedEvaluationRecordIds.has(course.recordId)).length;
+    const coursesNeedingDetail = forceRefresh
+      ? uniqueCourses
+      : uniqueCourses.filter((course) => !cachedEvaluationRecordIds.has(course.recordId));
 
     emitSyncProgress({
       ...progressBase,
       state: searchOnly ? "complete" : "running",
       phaseName: searchOnly ? "complete" : "details",
-      message: searchOnly ? "検索カバレッジ確認が完了しました。" : "評価詳細と自由記述を取得しています。",
+      message: searchOnly
+        ? "検索カバレッジ確認が完了しました。"
+        : coursesNeedingDetail.length
+          ? "未保存の評価詳細と自由記述を取得しています。"
+          : "保存済みデータを確認しました。追加取得はありません。",
       searchExpectedTotal,
       searchFoundRaw: courses.length,
       searchFoundUnique: uniqueCourses.length,
@@ -962,7 +978,8 @@
       cappedSegmentsCount: cappedSegments.length,
       coverageComplete,
       detailTotal: uniqueCourses.length,
-      detailFetched: 0,
+      detailFetched: cachedDetailCount,
+      detailCached: cachedDetailCount,
       detailFailed: 0
     });
 
@@ -984,16 +1001,18 @@
       };
     }
 
-    const detailCourses = uniqueCourses.slice(0, maxDetails);
+    const detailCourses = coursesNeedingDetail.slice(0, maxDetails);
     const detailTotal = uniqueCourses.length;
-    const isLimitedDetailRun = detailCourses.length < uniqueCourses.length;
-    let fetched = 0;
+    const isLimitedDetailRun = detailCourses.length < coursesNeedingDetail.length;
+    let fetched = cachedDetailCount;
+    let fetchedFromNetwork = 0;
     let nextDetailIndex = 0;
     const failures = [];
     async function fetchOneDetail(course) {
       try {
         await fetchEvaluationByRecordId(course.recordId, { includeComments });
         fetched += 1;
+        fetchedFromNetwork += 1;
       } catch (error) {
         failures.push({
           recordId: course.recordId,
@@ -1014,6 +1033,8 @@
         coverageComplete,
         detailTotal,
         detailFetched: fetched,
+        detailCached: cachedDetailCount,
+        detailFetchedFromNetwork: fetchedFromNetwork,
         detailFailed: failures.length
       });
     }
@@ -1042,6 +1063,8 @@
       coverageComplete,
       detailTotal,
       detailFetched: fetched,
+      detailCached: cachedDetailCount,
+      detailFetchedFromNetwork: fetchedFromNetwork,
       detailFailed: failures.length
     });
 
@@ -1056,6 +1079,8 @@
       searchedSegments: segmentSummaries,
       cappedSegments,
       fetched,
+      cached: cachedDetailCount,
+      fetchedFromNetwork,
       failed: failures.length,
       failures: failures.slice(0, 20)
     };
