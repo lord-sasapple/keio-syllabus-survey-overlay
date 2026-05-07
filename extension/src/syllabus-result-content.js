@@ -2,6 +2,7 @@
   const {
     STORAGE_KEYS,
     cacheGetAll,
+    cacheGetMeta,
     compactCourseKey,
     normalizePerson,
     normalizeSemester,
@@ -107,18 +108,132 @@
     };
   }
 
+  function facultyMatches(courseFaculty, selectedFaculty) {
+    const courseValue = normalizeFacultyName(courseFaculty);
+    const selected = normalizeFacultyName(selectedFaculty);
+    if (!selected) return true;
+    if (!courseValue) return false;
+    return courseValue === selected || courseValue.includes(selected) || selected.includes(courseValue);
+  }
+
+  function normalizeFacultyName(value) {
+    const text = normalizeText(value);
+    const compact = text.replace(/[・\s]/g, "");
+    if (!compact) return "";
+    if (/総環|総合政策環境情報|環境情報|総合政策/.test(compact)) return "総合政策環境情報学部";
+    if (/政メ|政策メディア/.test(compact)) return "政策メディア研究科";
+    if (/文学研究科/.test(compact)) return "文学研究科";
+    if (/経済学研究科/.test(compact)) return "経済学研究科";
+    if (/法学研究科/.test(compact)) return "法学研究科";
+    if (/社会学研究科/.test(compact)) return "社会学研究科";
+    if (/商学研究科/.test(compact)) return "商学研究科";
+    if (/医学研究科/.test(compact)) return "医学研究科";
+    if (/理工学研究科/.test(compact)) return "理工学研究科";
+    if (/健康マネジメント研究科/.test(compact)) return "健康マネジメント研究科";
+    if (/薬学研究科/.test(compact)) return "薬学研究科";
+    if (/経営管理研究科/.test(compact)) return "経営管理研究科";
+    if (/システムデザインマネジメント研究科/.test(compact)) return "システムデザインマネジメント研究科";
+    if (/メディアデザイン研究科/.test(compact)) return "メディアデザイン研究科";
+    if (/法務研究科/.test(compact)) return "法務研究科";
+    if (/理工/.test(compact)) return "理工学部";
+    if (/看護/.test(compact)) return "看護医療学部";
+    if (/薬/.test(compact)) return "薬学部";
+    if (/医/.test(compact)) return "医学部";
+    if (/文/.test(compact)) return "文学部";
+    if (/経済/.test(compact)) return "経済学部";
+    if (/法/.test(compact)) return "法学部";
+    if (/商/.test(compact)) return "商学部";
+    return compact;
+  }
+
+  function progressIsRunning(progress) {
+    if (progress?.state !== "running") return false;
+    const updatedAt = Date.parse(progress.updatedAt || progress.at || progress.startedAt || "");
+    return !Number.isFinite(updatedAt) || Date.now() - updatedAt <= 10 * 60 * 1000;
+  }
+
+  function syncCoversFaculty(syncMeta, selectedFaculty) {
+    const sync = syncMeta?.value || syncMeta || {};
+    const targetFaculty = normalizeText(sync.targetFaculty);
+    const selected = normalizeText(selectedFaculty);
+    if (!selected) return false;
+    return Boolean(sync.ok) && targetFaculty === selected;
+  }
+
+  function statusForUnmatchedCourse(course, index) {
+    const selectedFaculty = normalizeText(index.selectedFaculty);
+    if (!selectedFaculty) {
+      return {
+        text: "学部未設定",
+        className: "ksso-result-badge--missing",
+        title: "拡張機能の画面で自分の学部を選ぶと、必要な授業評価だけを確認できます。"
+      };
+    }
+    if (!facultyMatches(course.faculty, selectedFaculty)) {
+      return {
+        text: "学部設定外",
+        className: "ksso-result-badge--missing",
+        title: `現在は ${selectedFaculty} の授業評価だけを確認する設定です。`
+      };
+    }
+    if (progressIsRunning(index.progressMeta?.value)) {
+      return {
+        text: "確認中",
+        className: "ksso-result-badge--loading",
+        title: `${selectedFaculty} の評価データを更新しています。終わるとこの一覧にも反映されます。`
+      };
+    }
+    if (syncCoversFaculty(index.syncMeta, selectedFaculty)) {
+      const sync = index.syncMeta?.value || {};
+      if (sync.coverageComplete === false) {
+        return {
+          text: "一部未確認",
+          className: "ksso-result-badge--loading",
+          title: "検索結果が多すぎた条件があり、この授業の公開評価を確認しきれていない可能性があります。"
+        };
+      }
+      return {
+        text: "公開評価なし",
+        className: "ksso-result-badge--missing",
+        title: "更新済みデータ内に、この授業の公開評価は見つかりませんでした。"
+      };
+    }
+    return {
+      text: "未確認",
+      className: "ksso-result-badge--loading",
+      title: `${selectedFaculty} の評価データはまだ更新されていません。拡張機能の画面から更新すると確認できます。`
+    };
+  }
+
   async function loadCacheIndex(force = false) {
     const fresh = cacheIndexPromise && Date.now() - cacheIndexLoadedAt < CACHE_REFRESH_MS;
     if (!force && fresh) return cacheIndexPromise;
 
     cacheIndexPromise = Promise.all([
       cacheGetAll("evaluations").catch(() => []),
-      storageGet({ [STORAGE_KEYS.evaluations]: {} }).catch(() => ({ [STORAGE_KEYS.evaluations]: {} }))
-    ]).then(([cachedEvaluations, storageState]) => {
+      cacheGetMeta("lastSyncAllEvaluations").catch(() => null),
+      cacheGetMeta("lastSyncProgress").catch(() => null),
+      storageGet({
+        [STORAGE_KEYS.evaluations]: {},
+        [STORAGE_KEYS.settings]: {},
+        [STORAGE_KEYS.lastSyncAllEvaluations]: null,
+        [STORAGE_KEYS.lastSyncProgress]: null
+      }).catch(() => ({
+        [STORAGE_KEYS.evaluations]: {},
+        [STORAGE_KEYS.settings]: {},
+        [STORAGE_KEYS.lastSyncAllEvaluations]: null,
+        [STORAGE_KEYS.lastSyncProgress]: null
+      }))
+    ]).then(([cachedEvaluations, syncMeta, progressMeta, storageState]) => {
       const storageEvaluations = Object.values(objectStore(storageState[STORAGE_KEYS.evaluations]));
       const evaluations = uniqueByRecordId([...cachedEvaluations, ...storageEvaluations]);
       cacheIndexLoadedAt = Date.now();
-      return buildCacheIndex(evaluations);
+      return {
+        ...buildCacheIndex(evaluations),
+        selectedFaculty: normalizeText(storageState[STORAGE_KEYS.settings]?.faculty),
+        syncMeta: syncMeta || (storageState[STORAGE_KEYS.lastSyncAllEvaluations] ? { value: storageState[STORAGE_KEYS.lastSyncAllEvaluations] } : null),
+        progressMeta: progressMeta || (storageState[STORAGE_KEYS.lastSyncProgress] ? { value: storageState[STORAGE_KEYS.lastSyncProgress] } : null)
+      };
     });
     return cacheIndexPromise;
   }
@@ -246,10 +361,11 @@
           `match:${match.evaluation.recordId || compactCourseKey(match.evaluation.course || {})}:${overall?.avg ?? ""}:${match.evaluation.course?.answerPercent ?? ""}`
         );
       } else {
+        const status = statusForUnmatchedCourse(course, index);
         insertBadge(
           item,
-          renderStatusBadge("キャッシュなし", "ksso-result-badge--missing", "Popupから集計値を同期すると一覧に表示されます。"),
-          `missing:${compactCourseKey(course)}`
+          renderStatusBadge(status.text, status.className, status.title),
+          `missing:${status.text}:${compactCourseKey(course)}`
         );
       }
     }

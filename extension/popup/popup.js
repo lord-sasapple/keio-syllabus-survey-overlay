@@ -3,13 +3,49 @@
     STORAGE_KEYS,
     cacheGetAll,
     cacheGetMeta,
-    storageGet
+    normalizeText,
+    storageGet,
+    storageSet
   } = window.KeioSurveyShared;
 
   let progressTimer = null;
   let optimisticProgress = null;
+  let currentSettings = { faculty: "" };
+  let ksupportReadyState = null;
+  const DEBUG = false;
+  const FACULTY_OPTIONS = [
+    "文学部",
+    "経済学部",
+    "法学部",
+    "商学部",
+    "医学部",
+    "理工学部",
+    "総合政策・環境情報学部",
+    "看護医療学部",
+    "薬学部",
+    "文学研究科",
+    "経済学研究科",
+    "法学研究科",
+    "社会学研究科",
+    "商学研究科",
+    "医学研究科",
+    "理工学研究科",
+    "政策・メディア研究科",
+    "健康マネジメント研究科",
+    "薬学研究科",
+    "経営管理研究科",
+    "システムデザイン・マネジメント研究科",
+    "メディアデザイン研究科",
+    "法務研究科",
+    "通信教育課程",
+    "日本語・日本文化教育センター",
+    "大学院共通",
+    "体育研究所",
+    "保健管理センター"
+  ];
 
   function debugLog(label, payload = null) {
+    if (!DEBUG) return;
     if (payload == null) {
       console.log(`[KSSO popup] ${label}`);
       return;
@@ -38,13 +74,46 @@
     if (element) element.classList.toggle(className, enabled);
   }
 
-  function countValues(value) {
+  function countValues(value, predicate = () => true) {
     if (!value || typeof value !== "object") return 0;
     return new Set(
       Object.values(value)
+        .filter((entry) => predicate(entry))
         .map((entry) => entry?.recordId || JSON.stringify(entry))
         .filter(Boolean)
     ).size;
+  }
+
+  function normalizeSettings(settings = {}) {
+    return {
+      ...settings,
+      faculty: normalizeText(settings.faculty)
+    };
+  }
+
+  function facultyMatchesCourse(course, faculty) {
+    const selected = normalizeText(faculty);
+    if (!selected) return true;
+    const value = normalizeText(course?.faculty);
+    if (!value) return false;
+    return value === selected || value.includes(selected) || selected.includes(value);
+  }
+
+  function facultyMatchesEvaluation(evaluation, faculty) {
+    return facultyMatchesCourse(evaluation?.course, faculty);
+  }
+
+  function progressIsStale(progress) {
+    if (progress?.state !== "running") return false;
+    const updatedAt = Date.parse(progress.updatedAt || progress.at || progress.startedAt || "");
+    return Number.isFinite(updatedAt) && Date.now() - updatedAt > 10 * 60 * 1000;
+  }
+
+  function progressMatchesFaculty(progress, faculty) {
+    const targetFaculty = normalizeText(progress?.targetFaculty);
+    const selected = normalizeText(faculty);
+    if (!selected) return true;
+    return targetFaculty === selected;
   }
 
   function formatLastSeen(lastSeen) {
@@ -92,16 +161,54 @@
     return value ? { value } : null;
   }
 
+  function populateFacultySelect() {
+    const select = $("faculty-select");
+    if (!select || select.dataset.ready === "1") return;
+    for (const faculty of FACULTY_OPTIONS) {
+      const option = document.createElement("option");
+      option.value = faculty;
+      option.textContent = faculty;
+      select.appendChild(option);
+    }
+    select.dataset.ready = "1";
+  }
+
+  function renderFacultySetting() {
+    const select = $("faculty-select");
+    const syncButton = $("sync-all");
+    if (select && select.value !== currentSettings.faculty) select.value = currentSettings.faculty;
+    if (currentSettings.faculty) {
+      setText("faculty-note", `${currentSettings.faculty}の授業評価と自由記述コメントを保存します。`);
+      if (syncButton) syncButton.disabled = false;
+      return;
+    }
+    setText("faculty-note", "保存する範囲を絞るため、先に自分の学部を選んでください。");
+    if (syncButton) syncButton.disabled = true;
+  }
+
+  async function saveFacultySetting(faculty) {
+    const current = await storageGet({ [STORAGE_KEYS.settings]: {} });
+    const settings = normalizeSettings({
+      ...(current[STORAGE_KEYS.settings] || {}),
+      faculty
+    });
+    currentSettings = settings;
+    optimisticProgress = null;
+    await storageSet({ [STORAGE_KEYS.settings]: settings });
+    renderFacultySetting();
+    await renderCounts();
+  }
+
   function phaseText(progress) {
-    if (progress?.derivedPartial) return "部分キャッシュ";
+    if (progress?.derivedPartial) return "保存済みデータあり";
     const phaseName = progress?.phaseName;
-    if (phaseName === "starting") return "同期を開始中";
+    if (phaseName === "starting") return "更新を開始中";
     if (phaseName === "searching") return "授業一覧を取得中";
     if (phaseName === "details") return "評価データを保存中";
     if (phaseName === "complete") return progress?.coverageComplete === false ? "完了（上限注意）" : "完了";
     if (phaseName === "failed") return "失敗";
-    if (progress?.state === "running") return "同期中";
-    return "未同期";
+    if (progress?.state === "running") return "更新中";
+    return "未更新";
   }
 
   function progressPercent(progress, syncMeta) {
@@ -165,23 +272,28 @@
     const progress = progressMeta?.value || {};
     const sync = syncMeta?.value || {};
     if (progress.state === "running") {
-      setText("readiness-title", "同期中");
-      setText("readiness-note", "授業評価を保存しています。進み具合は下に表示されます。");
+      setText("readiness-title", "更新中");
+      setText("readiness-note", `${currentSettings.faculty || "選択した学部"}の授業評価を保存しています。`);
+      return;
+    }
+    if (!currentSettings.faculty) {
+      setText("readiness-title", "学部を選択してください");
+      setText("readiness-note", "自分の学部を選ぶと、必要な授業評価だけを保存できます。");
       return;
     }
     if (evaluationCount > 0) {
       setText("readiness-title", "表示できます");
-      setText("readiness-note", `${evaluationCount.toLocaleString("ja-JP")}件の授業評価をシラバス上で表示できます。`);
+      setText("readiness-note", `${currentSettings.faculty ? `${currentSettings.faculty}で` : ""}${evaluationCount.toLocaleString("ja-JP")}件の授業評価をシラバス上で表示できます。`);
       return;
     }
     if (sync.ok === false) {
-      setText("readiness-title", "同期に失敗");
-      setText("readiness-note", "K-Supportを開いてログインし直してから、もう一度同期してください。");
+      setText("readiness-title", "更新に失敗");
+      setText("readiness-note", "K-Supportを開いてログインし直してから、もう一度更新してください。");
       return;
     }
-    setText("readiness-title", ksupportReady ? "同期できます" : "未同期");
+    setText("readiness-title", ksupportReady ? "更新できます" : "未更新");
     setText("readiness-note", ksupportReady
-      ? "K-Supportに接続できています。授業評価を同期できます。"
+      ? `${currentSettings.faculty}の授業評価を更新できます。`
       : "まずK-Supportを開いてログインしてください。"
     );
   }
@@ -193,8 +305,11 @@
       [STORAGE_KEYS.evaluations]: {},
       [STORAGE_KEYS.lastSeen]: null,
       [STORAGE_KEYS.lastSyncAllEvaluations]: null,
-      [STORAGE_KEYS.lastSyncProgress]: null
+      [STORAGE_KEYS.lastSyncProgress]: null,
+      [STORAGE_KEYS.settings]: {}
     });
+    currentSettings = normalizeSettings(state[STORAGE_KEYS.settings]);
+    renderFacultySetting();
     let [cachedCourses, cachedEvaluations, syncMeta, progressMeta] = await Promise.all([
       cacheGetAll("courses").catch((error) => {
         console.warn("[KSSO popup] cacheGetAll(courses) failed", error);
@@ -215,35 +330,46 @@
     ]);
     syncMeta ||= storageMeta(state[STORAGE_KEYS.lastSyncAllEvaluations]);
     progressMeta ||= storageMeta(state[STORAGE_KEYS.lastSyncProgress]) || optimisticProgress;
-    const courseCount = Math.max(cachedCourses.length, countValues(state[STORAGE_KEYS.courses]));
-    const evaluationCount = Math.max(cachedEvaluations.length, countValues(state[STORAGE_KEYS.evaluations]));
-    const commentsCount = cachedEvaluations.filter((evaluation) => commentSectionCount(evaluation) > 0).length;
+    if (syncMeta?.value && !progressMatchesFaculty(syncMeta.value, currentSettings.faculty)) {
+      syncMeta = null;
+    }
+    if (progressMeta?.value && (!progressMatchesFaculty(progressMeta.value, currentSettings.faculty) || progressIsStale(progressMeta.value))) {
+      progressMeta = null;
+    }
+    const faculty = currentSettings.faculty;
+    const cachedCoursesForFaculty = cachedCourses.filter((course) => facultyMatchesCourse(course, faculty));
+    const cachedEvaluationsForFaculty = cachedEvaluations.filter((evaluation) => facultyMatchesEvaluation(evaluation, faculty));
+    const storageCourseCount = countValues(state[STORAGE_KEYS.courses], (course) => facultyMatchesCourse(course, faculty));
+    const storageEvaluationCount = countValues(state[STORAGE_KEYS.evaluations], (evaluation) => facultyMatchesEvaluation(evaluation, faculty));
+    const courseCount = Math.max(cachedCoursesForFaculty.length, storageCourseCount);
+    const evaluationCount = Math.max(cachedEvaluationsForFaculty.length, storageEvaluationCount);
+    const commentsCount = cachedEvaluationsForFaculty.filter((evaluation) => commentSectionCount(evaluation) > 0).length;
 
     debugLog("renderCounts:data", {
-      cachedCourses: cachedCourses.length,
-      cachedEvaluations: cachedEvaluations.length,
-      storageCourses: countValues(state[STORAGE_KEYS.courses]),
-      storageEvaluations: countValues(state[STORAGE_KEYS.evaluations]),
+      selectedFaculty: faculty || null,
+      cachedCourses: cachedCoursesForFaculty.length,
+      cachedEvaluations: cachedEvaluationsForFaculty.length,
+      storageCourses: storageCourseCount,
+      storageEvaluations: storageEvaluationCount,
       syncMeta: syncMeta?.value || null,
       progressMeta: progressMeta?.value || null
     });
 
-    setText("course-count", String(courseCount));
     setText("evaluation-count", String(evaluationCount));
     setText("comment-count", String(commentsCount));
     setText("last-seen", formatLastSeen(syncMeta?.value) !== "-" ? formatLastSeen(syncMeta.value) : formatLastSeen(state[STORAGE_KEYS.lastSeen]));
-    setText("sync-status", syncMeta?.value ? syncStatusText(syncMeta) : evaluationCount ? "部分保存" : "未同期");
-    setText("sync-count", syncMeta?.value ? syncCountText(syncMeta) : evaluationCount ? `${evaluationCount}/-` : "-");
     if (!progressMeta?.value && (courseCount || evaluationCount)) {
       progressMeta = storageMeta({
         derivedPartial: true,
-        message: "保存済みデータはありますが、全件同期のメタ情報がありません。K-Support にログインして同期すると慶應全体の件数と進捗を確認できます。",
+      message: faculty
+        ? `${faculty}の保存済みデータがあります。更新すると最新の授業評価を確認できます。`
+          : "保存済みデータがあります。学部を選ぶと、その範囲だけを更新できます。",
         searchFoundUnique: courseCount || null,
         detailFetched: evaluationCount || null
       });
     }
     renderProgress(progressMeta, syncMeta);
-    renderReadiness({ evaluationCount, progressMeta, syncMeta });
+    renderReadiness({ evaluationCount, progressMeta, syncMeta, ksupportReady: ksupportReadyState });
     if (progressMeta?.value?.state === "running" && !progressTimer) {
       debugLog("progressTimer:start");
       progressTimer = setInterval(() => void renderCounts(), 2000);
@@ -260,24 +386,23 @@
     chrome.runtime.sendMessage({ type: "keioSurvey.ksupportStatus" }, (response) => {
       if (chrome.runtime.lastError || !response?.ok) {
         console.warn("[KSSO popup] ksupportStatus failed", chrome.runtime.lastError, response);
+        ksupportReadyState = false;
         setText("ksupport-status", "未接続");
+        void renderCounts();
         return;
       }
       const tabs = Array.isArray(response.tabs) ? response.tabs : [];
       const ready = tabs.some((tab) => tab.ok && tab.hasToken);
+      ksupportReadyState = ready;
       debugLog("ksupportStatus:response", { ready, tabs });
       setText("ksupport-status", ready ? "準備OK" : tabs.length ? "要再読込" : "未検出");
-      void renderCounts().then(() => renderReadiness({
-        evaluationCount: Number($("evaluation-count")?.textContent) || 0,
-        progressMeta: optimisticProgress,
-        syncMeta: null,
-        ksupportReady: ready
-      }));
+      void renderCounts();
     });
   }
 
   async function main() {
     debugLog("main:start");
+    populateFacultySelect();
     await renderCounts();
     renderKSupportStatus();
   }
@@ -289,17 +414,38 @@
     });
   });
 
+  $("faculty-select")?.addEventListener("change", (event) => {
+    const faculty = normalizeText(event.target.value);
+    debugLog("facultySetting:change", { faculty });
+    void saveFacultySetting(faculty);
+  });
+
   $("sync-all")?.addEventListener("click", () => {
-    debugLog("syncAll:click", { includeComments: false });
+    const faculty = normalizeText($("faculty-select")?.value || currentSettings.faculty);
+    debugLog("syncAll:click", { includeComments: true, faculty });
+    if (!faculty) {
+      setText("debug-message", "先に自分の学部を選んでください。");
+      renderReadiness({ evaluationCount: Number($("evaluation-count")?.textContent) || 0, progressMeta: null, syncMeta: null });
+      return;
+    }
     optimisticProgress = storageMeta({
       state: "running",
       phaseName: "starting",
-      message: "K-Supportに同期開始を依頼しました。最初の件数取得まで少し待ってください。",
+      message: `${faculty}の授業評価の更新を開始しています。`,
+      targetFaculty: faculty,
       startedAt: new Date().toISOString()
     });
-    setText("debug-message", "同期を開始しています...");
+    setText("debug-message", "更新を開始しています...");
     void renderCounts();
-    chrome.runtime.sendMessage({ type: "keioSurvey.syncAllEvaluations", options: { includeComments: false } }, (response) => {
+    chrome.runtime.sendMessage({
+      type: "keioSurvey.syncAllEvaluations",
+      options: {
+        includeComments: true,
+        detailConcurrency: 6,
+        partitionByFaculty: false,
+        criteria: { faculty }
+      }
+    }, (response) => {
       debugLog("syncAll:response", response || chrome.runtime.lastError?.message);
       if (chrome.runtime.lastError || !response?.ok) {
         optimisticProgress = null;
@@ -307,7 +453,7 @@
         void renderCounts();
         return;
       }
-      setText("debug-message", response.started ? "同期を開始しました。進み具合は上に表示されます。" : "同期はすでに実行中です。進み具合を確認しています。");
+      setText("debug-message", response.started ? "更新を開始しました。進み具合は上に表示されます。" : "更新はすでに実行中です。進み具合を確認しています。");
       if (!progressTimer) {
         debugLog("progressTimer:startAfterSyncClick");
         progressTimer = setInterval(() => void renderCounts(), 2000);

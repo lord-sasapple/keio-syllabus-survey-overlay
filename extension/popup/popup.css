@@ -38,6 +38,7 @@ dl > div {
 }
 
 .status-card,
+.settings-panel,
 .progress-panel {
   display: grid;
   gap: 8px;
@@ -46,6 +47,28 @@ dl > div {
   border-radius: 8px;
   padding: 12px;
   background: #ffffff;
+}
+
+.settings-panel label {
+  color: #111827;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.settings-panel select {
+  width: 100%;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 10px 36px 10px 12px;
+  background: #ffffff;
+  color: #111827;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.settings-panel p {
+  font-size: 12px;
 }
 
 .status-card span {
@@ -169,6 +192,12 @@ button {
 
 button:hover {
   background: #f1f5f9;
+}
+
+button:disabled {
+  color: #94a3b8;
+  cursor: not-allowed;
+  background: #f8fafc;
 }
 
 .privacy-note {

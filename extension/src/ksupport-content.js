@@ -1,4 +1,7 @@
 (() => {
+  if (window.__keioSurveyKSupportContentInstalled) return;
+  window.__keioSurveyKSupportContentInstalled = true;
+
   const {
     STORAGE_KEYS,
     cachePut,
@@ -193,10 +196,12 @@
 
     if (message?.type === "keioSurvey.syncAllEvaluations") {
       if (syncPromise) return { ok: true, started: false, message: "K-Support sync already running." };
+      const targetFaculty = normalizeText(message.options?.criteria?.faculty);
       await saveSyncProgress({
         state: "running",
         phaseName: "starting",
         message: "同期を開始しています。",
+        targetFaculty,
         startedAt: new Date().toISOString(),
         searchExpectedTotal: null,
         searchFoundRaw: 0,
@@ -218,6 +223,7 @@
             phaseName: response?.ok ? "complete" : "failed",
             message: response?.ok ? "同期が完了しました。" : (response?.message || "同期に失敗しました。"),
             startedAt: response?.startedAt || null,
+            targetFaculty: response?.targetFaculty || targetFaculty,
             searchExpectedTotal: response?.searchExpectedTotal ?? null,
             searchFoundRaw: response?.rawCourseCount ?? 0,
             searchFoundUnique: response?.courseCount ?? 0,

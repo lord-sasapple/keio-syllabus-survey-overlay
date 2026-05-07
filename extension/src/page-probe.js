@@ -225,6 +225,17 @@
       pageURI: params.get("aura.pageURI") || location.pathname,
       capturedAt: Date.now()
     };
+    emit({
+      phase: "session",
+      transport: "aura",
+      kind: "ksupport.auraSession",
+      context: auraContext,
+      token: auraToken,
+      pageURI: lastAuraRequest.pageURI,
+      capturedAt: lastAuraRequest.capturedAt,
+      origin: location.origin,
+      at: new Date().toISOString()
+    });
   }
 
   function asNumber(value) {
@@ -730,20 +741,22 @@
     return best;
   }
 
-  async function fetchEvaluationByRecordId(recordId) {
+  async function fetchEvaluationByRecordId(recordId, options = {}) {
     const detailPageURI = `/students/s/course-offering-schedule/${recordId}/csh163408`;
-    const detailPayload = await postAura(
+    const detailPayloadPromise = postAura(
       "ui-force-components-controllers-recordGlobalValueProvider.RecordGvp.getRecord",
       evaluationMessage(recordId),
       detailPageURI
     );
+    const commentsPromise = options.includeComments === false ? Promise.resolve([]) : fetchEvaluationComments(recordId);
+    const detailPayload = await detailPayloadPromise;
     const evaluation = extractEvaluationAggregate(detailPayload);
     if (!evaluation) {
       const error = new Error("K-Support の評価集計レスポンスを解析できませんでした。");
       error.code = "EVALUATION_PARSE_FAILED";
       throw error;
     }
-    evaluation.commentSections = await fetchEvaluationComments(recordId);
+    evaluation.commentSections = await commentsPromise;
     emit({
       phase: "data",
       transport: "aura",
@@ -868,6 +881,7 @@
 
   async function syncAllEvaluations(payload = {}) {
     const baseCriteria = syncCriteria(payload.criteria || {});
+    const includeComments = payload.includeComments !== false;
     const maxPages = Number(payload.maxPages) > 0 ? Number(payload.maxPages) : 200;
     const maxDetails = Number(payload.maxDetails) === 0
       ? 0
@@ -880,6 +894,7 @@
     const segmentSummaries = [];
     const progressBase = {
       state: "running",
+      targetFaculty: baseCriteria.faculty || "",
       startedAt: new Date().toISOString()
     };
 
@@ -956,6 +971,7 @@
         ok: true,
         kind: "ksupport.syncAllEvaluations",
         searchOnly: true,
+        targetFaculty: baseCriteria.faculty || "",
         coverageComplete,
         searchExpectedTotal,
         courseCount: uniqueCourses.length,
@@ -976,7 +992,7 @@
     const failures = [];
     async function fetchOneDetail(course) {
       try {
-        await fetchEvaluationByRecordId(course.recordId);
+        await fetchEvaluationByRecordId(course.recordId, { includeComments });
         fetched += 1;
       } catch (error) {
         failures.push({
@@ -1032,6 +1048,7 @@
     return {
       ok: true,
       kind: "ksupport.syncAllEvaluations",
+      targetFaculty: baseCriteria.faculty || "",
       coverageComplete,
       searchExpectedTotal,
       courseCount: uniqueCourses.length,

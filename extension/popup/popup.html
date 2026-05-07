@@ -33,15 +33,23 @@
           <dd id="last-seen">-</dd>
         </div>
         <div>
-          <dt>K-Support接続</dt>
+          <dt>K-Support</dt>
           <dd id="ksupport-status">-</dd>
         </div>
       </dl>
 
+      <section class="settings-panel" aria-label="自分の学部">
+        <label for="faculty-select">自分の学部</label>
+        <select id="faculty-select">
+          <option value="">学部を選択してください</option>
+        </select>
+        <p id="faculty-note">自分の学部を選ぶと、その学部の授業評価だけを保存します。</p>
+      </section>
+
       <section class="progress-panel" aria-label="保存済みデータの状況">
         <div class="progress-head">
           <div>
-            <h2>同期の進み具合</h2>
+            <h2>データ更新</h2>
             <p id="progress-stage">確認中</p>
           </div>
           <strong id="progress-percent">-</strong>
@@ -69,7 +77,7 @@
 
       <p class="privacy-note">保存先はこのブラウザ内だけです。K-SupportのID・パスワード・Cookieは保存しません。</p>
       <button id="open-ksupport" type="button">K-Supportを開く</button>
-      <button id="sync-all" type="button">授業評価を同期する</button>
+      <button id="sync-all" type="button">評価データを更新</button>
       <p id="debug-message" class="debug-message"></p>
     </main>
     <script src="../src/shared.js"></script>

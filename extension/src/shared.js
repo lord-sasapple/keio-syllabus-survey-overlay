@@ -4,6 +4,7 @@
     evaluations: "keioSurvey.evaluations",
     networkEvents: "keioSurvey.networkEvents",
     settings: "keioSurvey.settings",
+    ksupportSession: "keioSurvey.ksupportSession",
     lastSeen: "keioSurvey.lastSeen",
     lastSyncAllEvaluations: "keioSurvey.lastSyncAllEvaluations",
     lastSyncProgress: "keioSurvey.lastSyncProgress"

@@ -105,6 +105,48 @@ function createTab(createProperties) {
   return new Promise((resolve) => chrome.tabs.create(createProperties, resolve));
 }
 
+async function injectKSupportScripts(tabId) {
+  if (!chrome.scripting?.executeScript) {
+    return {
+      ok: false,
+      code: "SCRIPTING_UNAVAILABLE",
+      message: "K-Support タブへ再接続する権限がありません。"
+    };
+  }
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ["src/shared.js", "src/probe-bridge.js", "src/ksupport-content.js"]
+    });
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      code: "KSUPPORT_REINJECT_FAILED",
+      message: String(error?.message || error).slice(0, 500)
+    };
+  }
+}
+
+function shouldRetryAfterInjection(response) {
+  const message = response?.message || "";
+  return response?.code === "TAB_MESSAGE_FAILED"
+    && /Receiving end does not exist|Could not establish connection/i.test(message);
+}
+
+async function sendKSupportTabMessage(tab, message) {
+  let response = await sendTabMessage(tab.id, message);
+  if (!shouldRetryAfterInjection(response)) return response;
+
+  const injection = await injectKSupportScripts(tab.id);
+  if (!injection.ok) return injection;
+
+  // Give the bridge a moment to inject the page probe before asking it for data.
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  response = await sendTabMessage(tab.id, message);
+  return response;
+}
+
 async function ksupportTabs() {
   const tabs = await queryTabs({ url: KSUPPORT_TAB_PATTERN });
   return tabs
@@ -124,7 +166,7 @@ async function fetchViaKSupportTab(syllabus) {
 
   const failures = [];
   for (const tab of tabs) {
-    const response = await sendTabMessage(tab.id, {
+    const response = await sendKSupportTabMessage(tab, {
       type: "keioSurvey.fetchEvaluationForSyllabus",
       syllabus
     });
@@ -162,7 +204,7 @@ async function syncAllViaKSupportTab(options = {}) {
   }
   const failures = [];
   for (const tab of tabs) {
-    const response = await sendTabMessage(tab.id, {
+    const response = await sendKSupportTabMessage(tab, {
       type: "keioSurvey.syncAllEvaluations",
       options
     });
@@ -187,7 +229,7 @@ async function ksupportStatus() {
   const tabs = await ksupportTabs();
   const statuses = [];
   for (const tab of tabs) {
-    const response = await sendTabMessage(tab.id, { type: "keioSurvey.ksupportStatus" });
+    const response = await sendKSupportTabMessage(tab, { type: "keioSurvey.ksupportStatus" });
     statuses.push({
       tabId: tab.id,
       title: tab.title,
