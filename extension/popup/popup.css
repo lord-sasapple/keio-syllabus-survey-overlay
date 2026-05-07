@@ -37,8 +37,8 @@ dl > div {
   background: #f8fafc;
 }
 
-.status-card,
 .settings-panel,
+.login-panel,
 .progress-panel {
   display: grid;
   gap: 8px;
@@ -46,6 +46,30 @@ dl > div {
   border: 1px solid #dbe4ef;
   border-radius: 8px;
   padding: 12px;
+  background: #ffffff;
+}
+
+.login-panel[hidden] {
+  display: none;
+}
+
+.login-panel {
+  border-color: #fed7aa;
+  background: #fff7ed;
+}
+
+.login-panel h2 {
+  color: #9a3412;
+}
+
+.login-panel p {
+  color: #9a3412;
+  font-size: 12px;
+}
+
+.login-panel button {
+  margin-top: 0;
+  border-color: #fdba74;
   background: #ffffff;
 }
 
@@ -69,16 +93,6 @@ dl > div {
 
 .settings-panel p {
   font-size: 12px;
-}
-
-.status-card span {
-  color: #64748b;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.status-card h2 {
-  margin: 0;
 }
 
 .progress-head {

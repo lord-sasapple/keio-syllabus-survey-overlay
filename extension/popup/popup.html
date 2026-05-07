@@ -10,33 +10,8 @@
     <main>
       <header>
         <h1>Syllabus Lens</h1>
-        <p>シラバス上に、K-Supportの授業評価を重ねて表示します。</p>
+        <p>自分の学部を選び、必要な時だけ評価データを保存します。</p>
       </header>
-
-      <section id="readiness-card" class="status-card" aria-label="現在の状態">
-        <span>現在の状態</span>
-        <h2 id="readiness-title">確認中</h2>
-        <p id="readiness-note">保存済みデータを確認しています。</p>
-      </section>
-
-      <dl class="summary-list">
-        <div>
-          <dt>表示できる授業</dt>
-          <dd id="evaluation-count">-</dd>
-        </div>
-        <div>
-          <dt>自由記述つき</dt>
-          <dd id="comment-count">-</dd>
-        </div>
-        <div>
-          <dt>最終更新</dt>
-          <dd id="last-seen">-</dd>
-        </div>
-        <div>
-          <dt>K-Support</dt>
-          <dd id="ksupport-status">-</dd>
-        </div>
-      </dl>
 
       <section class="settings-panel" aria-label="自分の学部">
         <label for="faculty-select">自分の学部</label>
@@ -46,6 +21,12 @@
         <p id="faculty-note">
           自分の学部を選ぶと、その学部の授業評価だけを保存します。
         </p>
+      </section>
+
+      <section id="login-panel" class="login-panel" aria-label="K-Supportログイン" hidden>
+        <h2>K-Supportへのログインが必要です</h2>
+        <p>評価データを更新するには、K-Supportを開いてログインしてください。</p>
+        <button id="open-ksupport" type="button">K-Supportを開く</button>
       </section>
 
       <section class="progress-panel" aria-label="保存済みデータの状況">
@@ -79,7 +60,6 @@
         <p id="cache-detail" class="cache-detail">保存済み評価 - 件</p>
       </section>
 
-      <button id="open-ksupport" type="button">K-Supportを開く</button>
       <button id="sync-all" type="button">評価データを更新</button>
       <p id="debug-message" class="debug-message"></p>
     </main>
