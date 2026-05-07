@@ -13,13 +13,13 @@
   const ROOT_ID = "keio-survey-overlay-root";
   const STYLE_ID = "keio-survey-overlay-style";
   const CHOICE_LABELS = [
-    "①そう思わない",
-    "②あまりそう思わない",
-    "③どちらともいえない",
-    "④ややそう思う",
-    "⑤そう思う"
+    "1 そう思わない",
+    "2 あまりそう思わない",
+    "3 どちらともいえない",
+    "4 ややそう思う",
+    "5 そう思う"
   ];
-  const CHOICE_COLORS = ["#f4aaa0", "#f4d2c1", "#e8e8e8", "#c8d9f8", "#9fb6ef"];
+  const CHOICE_COLORS = ["#f4aaa0", "#f4d2c1", "#dcc3ff", "#c8d9f8", "#9fb6ef"];
 
   function readText(selector, root = document) {
     return normalizeText(root.querySelector(selector)?.textContent || "");
@@ -223,6 +223,16 @@
     `;
   }
 
+  function renderStars(value) {
+    const score = typeof value === "number" ? clampPercent((value / 5) * 100) : 0;
+    return `
+      <span class="ksso-stars" aria-label="5点中 ${formatAvg(value)}">
+        <span class="ksso-stars-base">★★★★★</span>
+        <span class="ksso-stars-fill" style="width: ${score}%">★★★★★</span>
+      </span>
+    `;
+  }
+
   function choiceTotal(counts) {
     return counts.reduce((sum, count) => sum + count, 0);
   }
@@ -248,24 +258,21 @@
     `;
   }
 
-  function renderDistributionBar(counts, total) {
-    if (!total) {
-      return '<div class="ksso-distribution ksso-distribution-empty" aria-hidden="true"></div>';
-    }
+  function renderChoiceRows(counts, total) {
     return `
-      <div class="ksso-distribution" aria-hidden="true">
-        ${CHOICE_LABELS.map((label, index) => {
+      <div class="ksso-choice-rows" aria-label="回答分布">
+        ${[4, 3, 2, 1, 0].map((index) => {
           const percent = clampPercent(choicePercent(counts[index] || 0, total) || 0);
-          if (percent === 0) return "";
-          const shortLabel = label.slice(0, 1);
           return `
-            <span
-              class="ksso-distribution-segment"
-              style="width: ${percent}%; background: ${CHOICE_COLORS[index]}"
-              title="${escapeHtml(label)} ${formatPercent(percent)}"
-            >
-              ${percent >= 12 ? `${escapeHtml(shortLabel)} ${formatPercent(percent)}` : ""}
-            </span>
+            <div class="ksso-choice-row">
+              <span class="ksso-choice-row-label">${index + 1}</span>
+              <span class="ksso-choice-track">
+                <span
+                  class="ksso-choice-fill"
+                  style="width: ${percent}%; background: ${CHOICE_COLORS[index]}"
+                ></span>
+              </span>
+            </div>
           `;
         }).join("")}
       </div>
@@ -298,9 +305,14 @@
       <li class="ksso-question">
         <div class="ksso-question-head">
           <span class="ksso-question-title">${escapeHtml(title)}</span>
-          <span class="ksso-question-avg">平均 ${formatAvg(question.avg)}</span>
         </div>
-        ${renderDistributionBar(counts, total)}
+        <div class="ksso-question-overview">
+          ${renderChoiceRows(counts, total)}
+          <div class="ksso-question-score">
+            <span class="ksso-question-score-value">${formatAvg(question.avg)}</span>
+            <span class="ksso-question-score-stars">${renderStars(question.avg)}</span>
+          </div>
+        </div>
       </li>
     `;
   }
@@ -376,9 +388,9 @@
       }
       #${ROOT_ID} .ksso-summary {
         display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 8px;
-        margin-bottom: 12px;
+        grid-template-columns: minmax(220px, 1.4fr) repeat(2, minmax(0, 1fr));
+        gap: 10px;
+        margin-bottom: 14px;
       }
       #${ROOT_ID} .ksso-metric {
         border: 1px solid #e5eaf1;
@@ -386,14 +398,27 @@
         padding: 8px 10px;
         background: #f8fafc;
       }
+      #${ROOT_ID} .ksso-metric--overall {
+        border-color: #fde68a;
+        background: #fffbeb;
+        padding: 14px 16px;
+      }
       #${ROOT_ID} .ksso-label {
         color: #64748b;
         font-size: 12px;
+      }
+      #${ROOT_ID} .ksso-metric--overall .ksso-label {
+        color: #92400e;
+        font-size: 13px;
+        font-weight: 700;
       }
       #${ROOT_ID} .ksso-value {
         display: block;
         font-size: 18px;
         font-weight: 700;
+      }
+      #${ROOT_ID} .ksso-metric--overall .ksso-value {
+        margin-top: 4px;
       }
       #${ROOT_ID} .ksso-rating {
         display: flex;
@@ -403,6 +428,19 @@
       }
       #${ROOT_ID} .ksso-rating-number {
         flex: 0 0 auto;
+      }
+      #${ROOT_ID} .ksso-metric--overall .ksso-rating {
+        align-items: flex-end;
+        gap: 10px;
+      }
+      #${ROOT_ID} .ksso-metric--overall .ksso-rating-number {
+        color: #111827;
+        font-size: 42px;
+        font-weight: 800;
+        line-height: 0.95;
+      }
+      #${ROOT_ID} .ksso-metric--overall .ksso-stars {
+        font-size: 22px;
       }
       #${ROOT_ID} .ksso-stars {
         position: relative;
@@ -458,49 +496,67 @@
       #${ROOT_ID} .ksso-question {
         border: 1px solid #eef2f7;
         border-radius: 6px;
-        padding: 10px;
+        padding: 12px 14px;
         background: #ffffff;
       }
       #${ROOT_ID} .ksso-question-head {
         display: flex;
         justify-content: space-between;
         gap: 8px;
+        margin-bottom: 10px;
       }
       #${ROOT_ID} .ksso-question-title {
         min-width: 0;
         font-weight: 600;
       }
-      #${ROOT_ID} .ksso-question-avg {
-        color: #64748b;
-        font-size: 12px;
-        white-space: nowrap;
-      }
-      #${ROOT_ID} .ksso-distribution {
-        display: flex;
-        height: 24px;
-        overflow: hidden;
-        border: 1px solid #e2e8f0;
-        border-radius: 6px;
-        margin: 8px 0;
-        background: #f8fafc;
-      }
-      #${ROOT_ID} .ksso-distribution-empty {
-        background: #f1f5f9;
-      }
-      #${ROOT_ID} .ksso-distribution-segment {
-        display: inline-flex;
+      #${ROOT_ID} .ksso-question-overview {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 96px;
         align-items: center;
-        justify-content: center;
+        gap: 18px;
+      }
+      #${ROOT_ID} .ksso-choice-rows {
+        display: grid;
+        gap: 7px;
+        min-width: 0;
+      }
+      #${ROOT_ID} .ksso-choice-row {
+        display: grid;
+        grid-template-columns: 22px minmax(0, 1fr);
+        align-items: center;
+        gap: 8px;
+      }
+      #${ROOT_ID} .ksso-choice-row-label {
+        color: #475569;
+        font-size: 13px;
+        font-weight: 700;
+        text-align: center;
+      }
+      #${ROOT_ID} .ksso-choice-track {
+        display: block;
+        height: 9px;
+        overflow: hidden;
+        border-radius: 999px;
+        background: #eef2f7;
+      }
+      #${ROOT_ID} .ksso-choice-fill {
+        display: block;
         height: 100%;
-        min-width: 2px;
+        border-radius: inherit;
+      }
+      #${ROOT_ID} .ksso-question-score {
+        display: grid;
+        justify-items: center;
+        gap: 6px;
         color: #1f2937;
-        font-size: 11px;
+      }
+      #${ROOT_ID} .ksso-question-score-value {
+        font-size: 42px;
         font-weight: 700;
         line-height: 1;
-        white-space: nowrap;
       }
-      #${ROOT_ID} .ksso-distribution-segment + .ksso-distribution-segment {
-        border-left: 2px solid #ffffff;
+      #${ROOT_ID} .ksso-question-score-stars .ksso-stars {
+        font-size: 16px;
       }
       #${ROOT_ID} .ksso-comments {
         border-top: 1px solid #eef2f7;
@@ -603,6 +659,18 @@
         #${ROOT_ID} .ksso-questions {
           grid-template-columns: 1fr;
         }
+        #${ROOT_ID} .ksso-metric--overall .ksso-rating-number {
+          font-size: 36px;
+        }
+        #${ROOT_ID} .ksso-question-overview {
+          grid-template-columns: 1fr;
+        }
+        #${ROOT_ID} .ksso-question-score {
+          justify-items: start;
+        }
+        #${ROOT_ID} .ksso-question-score-value {
+          font-size: 34px;
+        }
         #${ROOT_ID} .ksso-top {
           align-items: flex-start;
           flex-direction: column;
@@ -629,7 +697,7 @@
         <div class="ksso-meta">K-Support / 照合スコア ${match.score}</div>
       </div>
       <div class="ksso-summary">
-        <div class="ksso-metric"><span class="ksso-label">総合満足度</span><span class="ksso-value">${renderRating(q7?.avg)}</span></div>
+        <div class="ksso-metric ksso-metric--overall"><span class="ksso-label">総合満足度</span><span class="ksso-value">${renderRating(q7?.avg)}</span></div>
         <div class="ksso-metric"><span class="ksso-label">回答率</span><span class="ksso-value">${formatPercent(evaluation.course?.answerPercent)}</span></div>
         <div class="ksso-metric"><span class="ksso-label">回答数</span><span class="ksso-value">${total || "-"}</span></div>
       </div>

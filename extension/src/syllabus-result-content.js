@@ -154,10 +154,17 @@
 
   function syncCoversFaculty(syncMeta, selectedFaculty) {
     const sync = syncMeta?.value || syncMeta || {};
-    const targetFaculty = normalizeText(sync.targetFaculty);
-    const selected = normalizeText(selectedFaculty);
+    const targetFaculty = normalizeFacultyName(sync.targetFaculty);
+    const selected = normalizeFacultyName(selectedFaculty);
     if (!selected) return false;
-    return Boolean(sync.ok) && targetFaculty === selected;
+    if (!sync.ok && sync.state !== "complete" && sync.state !== "complete_with_errors") return false;
+    return targetFaculty === selected || targetFaculty.includes(selected) || selected.includes(targetFaculty);
+  }
+
+  function completedSyncForFaculty(index, selectedFaculty) {
+    if (syncCoversFaculty(index.syncMeta, selectedFaculty)) return index.syncMeta?.value || index.syncMeta || {};
+    if (syncCoversFaculty(index.progressMeta, selectedFaculty)) return index.progressMeta?.value || index.progressMeta || {};
+    return null;
   }
 
   function statusForUnmatchedCourse(course, index) {
@@ -183,8 +190,9 @@
         title: `${selectedFaculty} の評価データを更新しています。終わるとこの一覧にも反映されます。`
       };
     }
-    if (syncCoversFaculty(index.syncMeta, selectedFaculty)) {
-      const sync = index.syncMeta?.value || {};
+    const completedSync = completedSyncForFaculty(index, selectedFaculty);
+    if (completedSync) {
+      const sync = completedSync;
       if (sync.coverageComplete === false) {
         return {
           text: "一部未確認",
@@ -384,7 +392,7 @@
 
     chrome.storage.onChanged.addListener((changes, areaName) => {
       if (areaName !== "local") return;
-      if (changes[STORAGE_KEYS.evaluations] || changes[STORAGE_KEYS.lastSyncAllEvaluations]) {
+      if (changes[STORAGE_KEYS.evaluations] || changes[STORAGE_KEYS.lastSyncAllEvaluations] || changes[STORAGE_KEYS.lastSyncProgress]) {
         scheduleRender(true);
       }
     });
