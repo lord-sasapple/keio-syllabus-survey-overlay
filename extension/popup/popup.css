@@ -39,7 +39,8 @@ dl > div {
 
 .settings-panel,
 .login-panel,
-.progress-panel {
+.progress-panel,
+.confirm-panel {
   display: grid;
   gap: 8px;
   margin: 0 0 14px;
@@ -50,6 +51,11 @@ dl > div {
 }
 
 .login-panel[hidden] {
+  display: none;
+}
+
+.confirm-panel[hidden],
+button[hidden] {
   display: none;
 }
 
@@ -212,6 +218,32 @@ button:disabled {
   color: #94a3b8;
   cursor: not-allowed;
   background: #f8fafc;
+}
+
+.secondary-button {
+  color: #475569;
+  background: #f8fafc;
+}
+
+.confirm-panel {
+  margin-top: 8px;
+  border-color: #cbd5e1;
+  background: #f8fafc;
+}
+
+.confirm-panel p {
+  color: #475569;
+  font-size: 13px;
+}
+
+.confirm-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.confirm-actions button {
+  margin-top: 4px;
 }
 
 .privacy-note {

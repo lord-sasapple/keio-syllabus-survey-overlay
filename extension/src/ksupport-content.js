@@ -219,12 +219,15 @@
       if (syncPromise) return { ok: true, started: false, message: "K-Support sync already running." };
       const targetFaculty = normalizeText(message.options?.criteria?.faculty);
       const cachedRecordIds = await cachedEvaluationRecordIds();
+      const forceRefresh = Boolean(message.options?.forceRefresh);
       await saveSyncProgress({
         state: "running",
         phaseName: "starting",
-        message: cachedRecordIds.length
-          ? "保存済みデータを確認しています。"
-          : "同期を開始しています。",
+        message: forceRefresh
+          ? "保存済みデータを再取得しています。"
+          : (cachedRecordIds.length
+            ? "保存済みデータを確認しています。"
+            : "同期を開始しています。"),
         targetFaculty,
         startedAt: new Date().toISOString(),
         searchExpectedTotal: null,
@@ -233,8 +236,8 @@
         segmentsDone: 0,
         cappedSegmentsCount: 0,
         detailTotal: null,
-        detailFetched: cachedRecordIds.length,
-        detailCached: cachedRecordIds.length,
+        detailFetched: forceRefresh ? 0 : cachedRecordIds.length,
+        detailCached: forceRefresh ? 0 : cachedRecordIds.length,
         detailFailed: 0
       });
       syncPromise = pageCommand("syncAllEvaluations", {

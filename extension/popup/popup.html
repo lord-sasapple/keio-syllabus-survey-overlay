@@ -9,8 +9,8 @@
   <body>
     <main>
       <header>
-        <h1>Syllabus Lens</h1>
-        <p>自分の学部を選び、必要な時だけ評価データを保存します。</p>
+        <h1>Syllabus Lens 💬</h1>
+        <p>シラバスにみんなの授業アンケートの結果が表示されます</p>
       </header>
 
       <section class="settings-panel" aria-label="自分の学部">
@@ -23,7 +23,12 @@
         </p>
       </section>
 
-      <section id="login-panel" class="login-panel" aria-label="K-Supportログイン" hidden>
+      <section
+        id="login-panel"
+        class="login-panel"
+        aria-label="K-Supportログイン"
+        hidden
+      >
         <h2>K-Supportへのログインが必要です</h2>
         <p>評価データを更新するには、K-Supportを開いてログインしてください。</p>
         <button id="open-ksupport" type="button">K-Supportを開く</button>
@@ -61,6 +66,31 @@
       </section>
 
       <button id="sync-all" type="button">評価データを更新</button>
+      <button id="force-refresh" class="secondary-button" type="button" hidden>
+        すべて再取得
+      </button>
+
+      <section
+        id="force-confirm"
+        class="confirm-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="force-confirm-title"
+        hidden
+      >
+        <h2 id="force-confirm-title">アンケート結果を更新します</h2>
+        <p>5〜10分ほど時間がかかる場合があります。</p>
+        <div class="confirm-actions">
+          <button
+            id="force-confirm-cancel"
+            class="secondary-button"
+            type="button"
+          >
+            キャンセル
+          </button>
+          <button id="force-confirm-run" type="button">更新する</button>
+        </div>
+      </section>
       <p id="debug-message" class="debug-message"></p>
     </main>
     <script src="../src/shared.js"></script>

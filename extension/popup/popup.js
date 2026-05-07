@@ -80,6 +80,11 @@
     if (element) element.hidden = hidden;
   }
 
+  function setDisabled(id, disabled) {
+    const element = $(id);
+    if (element) element.disabled = disabled;
+  }
+
   function countValues(value, predicate = () => true) {
     if (!value || typeof value !== "object") return 0;
     return new Set(
@@ -160,17 +165,58 @@
     setHidden("login-panel", !needsLogin);
   }
 
-  function renderSyncButton(evaluationCount, progress = {}) {
+  function completedSyncState({ courseCount, evaluationCount, progressMeta, syncMeta }) {
+    if (!currentSettings.faculty) return false;
+    const progress = progressMeta?.value || {};
+    const sync = syncMeta?.value || {};
+    const detailTotal = Number(progress.detailTotal ?? sync.courseCount ?? courseCount);
+    const detailFetched = Number(progress.detailFetched ?? sync.fetched ?? evaluationCount);
+    const detailFailed = Number(progress.detailFailed ?? sync.failed ?? 0);
+    const coverageComplete = progress.coverageComplete ?? sync.coverageComplete;
+    return (
+      Number.isFinite(detailTotal) &&
+      detailTotal > 0 &&
+      Number.isFinite(detailFetched) &&
+      detailFetched >= detailTotal &&
+      evaluationCount >= detailTotal &&
+      detailFailed === 0 &&
+      coverageComplete !== false
+    );
+  }
+
+  function renderSyncControls({ courseCount, evaluationCount, progressMeta, syncMeta }) {
+    const progress = progressMeta?.value || {};
     const syncButton = $("sync-all");
+    const forceButton = $("force-refresh");
+    const isRunning = progress.state === "running";
+    const isComplete = completedSyncState({ courseCount, evaluationCount, progressMeta, syncMeta });
+
+    setHidden("force-refresh", !currentSettings.faculty || isRunning || !isComplete);
+    setDisabled("force-refresh", !currentSettings.faculty || isRunning);
+    if (forceButton) forceButton.textContent = "すべて再取得";
+
     if (!syncButton) return;
     if (!currentSettings.faculty) {
       syncButton.textContent = "学部を選んでください";
+      syncButton.disabled = true;
+      syncButton.hidden = false;
+      return;
+    }
+    if (isRunning) {
+      syncButton.textContent = "更新中";
+      syncButton.disabled = true;
+      syncButton.hidden = false;
+      setHidden("force-confirm", true);
+      return;
+    }
+    if (isComplete) {
+      syncButton.hidden = true;
+      syncButton.disabled = true;
     } else {
       syncButton.textContent = evaluationCount > 0 ? "未保存分を更新" : "評価データを保存";
+      syncButton.disabled = false;
+      syncButton.hidden = false;
     }
-    syncButton.disabled =
-      !currentSettings.faculty ||
-      progress.state === "running";
   }
 
   async function saveFacultySetting(faculty) {
@@ -331,7 +377,7 @@
     }
     renderProgress(progressMeta, syncMeta);
     renderLoginPrompt(progressMeta?.value || {});
-    renderSyncButton(evaluationCount, progressMeta?.value || {});
+    renderSyncControls({ courseCount, evaluationCount, progressMeta, syncMeta });
     if (progressMeta?.value?.state === "running" && !progressTimer) {
       debugLog("progressTimer:start");
       progressTimer = setInterval(() => void renderCounts(), 2000);
@@ -378,12 +424,13 @@
   $("faculty-select")?.addEventListener("change", (event) => {
     const faculty = normalizeText(event.target.value);
     debugLog("facultySetting:change", { faculty });
+    setHidden("force-confirm", true);
     void saveFacultySetting(faculty);
   });
 
-  $("sync-all")?.addEventListener("click", () => {
+  function startEvaluationSync({ forceRefresh = false } = {}) {
     const faculty = normalizeText($("faculty-select")?.value || currentSettings.faculty);
-    debugLog("syncAll:click", { includeComments: true, faculty });
+    debugLog("syncAll:click", { includeComments: true, faculty, forceRefresh });
     if (!faculty) {
       setText("debug-message", "先に自分の学部を選んでください。");
       return;
@@ -396,10 +443,13 @@
       return;
     }
     showLoginPrompt = false;
+    setHidden("force-confirm", true);
     optimisticProgress = storageMeta({
       state: "running",
       phaseName: "starting",
-      message: `${faculty}の未保存分を確認しています。`,
+      message: forceRefresh
+        ? `${faculty}の授業評価をすべて再取得しています。`
+        : `${faculty}の未保存分を確認しています。`,
       targetFaculty: faculty,
       startedAt: new Date().toISOString()
     });
@@ -411,6 +461,7 @@
         includeComments: true,
         detailConcurrency: 6,
         partitionByFaculty: false,
+        forceRefresh,
         criteria: { faculty }
       }
     }, (response) => {
@@ -430,6 +481,36 @@
       setTimeout(() => void renderCounts(), 800);
       setTimeout(() => void renderCounts(), 2000);
     });
+  }
+
+  $("sync-all")?.addEventListener("click", () => {
+    startEvaluationSync({ forceRefresh: false });
+  });
+
+  $("force-refresh")?.addEventListener("click", () => {
+    const faculty = normalizeText($("faculty-select")?.value || currentSettings.faculty);
+    if (!faculty) {
+      setText("debug-message", "先に自分の学部を選んでください。");
+      return;
+    }
+    if (ksupportReadyState === false) {
+      showLoginPrompt = true;
+      setHidden("login-panel", false);
+      setText("debug-message", "K-Supportにログインしてから更新してください。");
+      void renderCounts();
+      return;
+    }
+    setText("debug-message", "");
+    setHidden("force-confirm", false);
+  });
+
+  $("force-confirm-cancel")?.addEventListener("click", () => {
+    setHidden("force-confirm", true);
+    setText("debug-message", "");
+  });
+
+  $("force-confirm-run")?.addEventListener("click", () => {
+    startEvaluationSync({ forceRefresh: true });
   });
 
   void main();
