@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Keio Syllabus Survey Overlay",
+  "name": "Syllabus Lens",
   "version": "0.1.0",
-  "description": "Shows K-Support class evaluation summaries on Keio syllabus pages.",
+  "description": "シラバス・K-Support / K-LMS と連動し、授業評価・学生レビュー・改善要望を見やすくするブラウザ拡張機能です。",
   "permissions": ["storage", "tabs", "scripting"],
   "host_permissions": [
     "https://gslbs.keio.jp/*",
@@ -10,7 +10,7 @@
     "https://www.keio.ac.jp/*"
   ],
   "action": {
-    "default_title": "Keio Survey Overlay",
+    "default_title": "Syllabus Lens",
     "default_popup": "popup/popup.html"
   },
   "background": {

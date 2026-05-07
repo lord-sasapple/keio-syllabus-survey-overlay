@@ -1,4 +1,4 @@
-# keio-syllabus-survey-overlay
+# Syllabus Lens — Course Reviews for Keio University
 
 慶應義塾大学のシラバス・履修登録・K-Support / K-LMS と連動し、授業評価・学生レビュー・改善要望を見やすくするためのブラウザ拡張機能です。
 
