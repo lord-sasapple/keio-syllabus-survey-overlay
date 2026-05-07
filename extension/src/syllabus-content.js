@@ -316,6 +316,32 @@
     `;
   }
 
+  function isReversedWorkloadQuestion(question) {
+    const text = normalizeText(`${question?.ja || ""} ${question?.en || ""}`);
+    if (/適切/.test(text)) return false;
+    return /負荷/.test(text) && /(大きすぎ|大き過ぎ|重すぎ|重過ぎ)/.test(text);
+  }
+
+  function displayQuestion(question) {
+    if (!isReversedWorkloadQuestion(question)) {
+      return {
+        avg: question.avg,
+        counts: Array.isArray(question.counts) ? question.counts : [],
+        title: question.ja || question.en || `Q${question.index}`,
+        reversed: false,
+      };
+    }
+    const avg = typeof question.avg === "number" ? 6 - question.avg : null;
+    return {
+      avg,
+      counts: Array.isArray(question.counts)
+        ? question.counts.slice().reverse()
+        : [],
+      title: `Q${question.index} 学修の負荷は適切だった`,
+      reversed: true,
+    };
+  }
+
   function renderCommentSections(sections) {
     const visibleSections = normalizeCommentSections(sections);
     if (!visibleSections.length) return "";
@@ -339,19 +365,31 @@
   }
 
   function renderQuestion(question) {
-    const counts = Array.isArray(question.counts) ? question.counts : [];
+    const display = displayQuestion(question);
+    const counts = display.counts;
     const total = choiceTotal(counts);
-    const title = question.ja || question.en || `Q${question.index}`;
     return `
       <li class="ksso-question">
         <div class="ksso-question-head">
-          <span class="ksso-question-title">${escapeHtml(title)}</span>
+          <span class="ksso-question-title">
+            ${escapeHtml(display.title)}
+            ${
+              display.reversed
+                ? `
+              <button type="button" class="ksso-info-button" aria-label="表示を反転した理由">
+                i
+                <span class="ksso-tooltip" role="tooltip">元の設問は「学修の負荷が大きすぎた」でした。見やすくするため、高いほど良い評価になるように表示を反転しています。</span>
+              </button>
+            `
+                : ""
+            }
+          </span>
         </div>
         <div class="ksso-question-overview">
           ${renderChoiceRows(counts, total)}
           <div class="ksso-question-score">
-            <span class="ksso-question-score-value">${formatAvg(question.avg)}</span>
-            <span class="ksso-question-score-stars">${renderStars(question.avg)}</span>
+            <span class="ksso-question-score-value">${formatAvg(display.avg)}</span>
+            <span class="ksso-question-score-stars">${renderStars(display.avg)}</span>
           </div>
         </div>
       </li>
@@ -372,7 +410,8 @@
       <a class="ksso-faculty-profile" href="${escapeHtml(profile.profileUrl)}" target="_blank" rel="noopener noreferrer">
         <img class="ksso-faculty-photo" src="${escapeHtml(profile.imageUrl)}" alt="${escapeHtml(name)}">
         <span class="ksso-faculty-body">
-          <span class="ksso-faculty-name">${escapeHtml(name)}</span>
+          <span class="ksso-faculty-label">教員プロフィール</span>
+          <span class="ksso-faculty-name">${escapeHtml(name)} <span class="ksso-external-mark" aria-hidden="true">↗</span></span>
           ${profile.affiliations ? `<span class="ksso-faculty-affiliation">${escapeHtml(profile.affiliations)}</span>` : ""}
         </span>
       </a>
@@ -436,28 +475,30 @@
       #${ROOT_ID} .ksso-faculty-profile-slot[hidden] {
         display: none;
       }
+      #${ROOT_ID} .ksso-faculty-profile-slot {
+        min-width: 0;
+      }
       #${ROOT_ID} .ksso-faculty-profile {
         display: inline-flex;
         align-items: center;
         gap: 10px;
+        width: 100%;
+        height: 100%;
         max-width: 100%;
-        margin: 0 0 12px;
-        padding: 8px 10px;
-        border: 1px solid #e5eaf1;
-        border-radius: 8px;
-        background: #ffffff;
+        padding: 10px 12px;
         color: #1f2937;
         text-decoration: none;
+        box-sizing: border-box;
       }
       #${ROOT_ID} .ksso-faculty-profile:hover {
         border-color: #cbd5e1;
         background: #f8fafc;
       }
       #${ROOT_ID} .ksso-faculty-photo {
-        width: 56px;
-        height: 56px;
+        width: 76px;
+        height: 76px;
         flex: 0 0 auto;
-        border-radius: 50%;
+        border-radius: 8px;
         object-fit: cover;
         background: #f1f5f9;
       }
@@ -466,7 +507,15 @@
         gap: 2px;
         min-width: 0;
       }
+      #${ROOT_ID} .ksso-faculty-label {
+        color: #64748b;
+        font-size: 11px;
+        font-weight: 700;
+      }
       #${ROOT_ID} .ksso-faculty-name {
+        display: flex;
+        align-items: center;
+        gap: 4px;
         font-size: 14px;
         font-weight: 700;
       }
@@ -475,6 +524,11 @@
         color: #64748b;
         font-size: 12px;
         line-height: 1.35;
+      }
+      #${ROOT_ID} .ksso-external-mark {
+        color: #64748b;
+        font-size: 12px;
+        line-height: 1;
       }
       #${ROOT_ID} .ksso-actions {
         display: flex;
@@ -506,20 +560,39 @@
       }
       #${ROOT_ID} .ksso-summary {
         display: grid;
-        grid-template-columns: minmax(220px, 1.4fr) repeat(2, minmax(0, 1fr));
+        grid-template-columns: minmax(300px, 1.15fr) minmax(280px, 1fr);
+        align-items: stretch;
         gap: 10px;
         margin-bottom: 14px;
+        border: 1px solid #d9d9d9;
+        border-radius: 10px;
       }
       #${ROOT_ID} .ksso-metric {
-        border: 1px solid #e5eaf1;
-        border-radius: 6px;
         padding: 8px 10px;
-        background: #f8fafc;
       }
       #${ROOT_ID} .ksso-metric--overall {
-        border-color: #fde68a;
-        background: #fffbeb;
         padding: 14px 16px;
+      }
+      #${ROOT_ID} .ksso-metric--responses {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px 14px;
+        margin-top: 8px;
+        color: #475569;
+      }
+      #${ROOT_ID} .ksso-response-row {
+        display: inline-flex;
+        align-items: baseline;
+        gap: 5px;
+      }
+      #${ROOT_ID} .ksso-response-name {
+        color: #64748b;
+        font-size: 11px;
+      }
+      #${ROOT_ID} .ksso-response-value {
+        color: #334155;
+        font-size: 12px;
+        font-weight: 700;
       }
       #${ROOT_ID} .ksso-label {
         color: #64748b;
@@ -624,8 +697,60 @@
         margin-bottom: 10px;
       }
       #${ROOT_ID} .ksso-question-title {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
         min-width: 0;
         font-weight: 600;
+      }
+      #${ROOT_ID} .ksso-info-button {
+        position: relative;
+        display: inline-grid;
+        place-items: center;
+        width: 18px;
+        height: 18px;
+        flex: 0 0 auto;
+        border: 1px solid #cbd5e1;
+        border-radius: 999px;
+        background: #ffffff;
+        color: #64748b;
+        cursor: help;
+        font: inherit;
+        font-size: 12px;
+        font-weight: 800;
+        line-height: 1;
+      }
+      #${ROOT_ID} .ksso-info-button:hover,
+      #${ROOT_ID} .ksso-info-button:focus-visible {
+        border-color: #94a3b8;
+        color: #334155;
+      }
+      #${ROOT_ID} .ksso-tooltip {
+        position: absolute;
+        z-index: 2;
+        left: 50%;
+        bottom: calc(100% + 8px);
+        width: max-content;
+        max-width: min(320px, 70vw);
+        transform: translateX(-50%);
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        padding: 8px 10px;
+        background: #0f172a;
+        color: #ffffff;
+        font-size: 12px;
+        font-weight: 600;
+        line-height: 1.45;
+        white-space: normal;
+        box-shadow: 0 8px 18px rgba(15, 23, 42, 0.18);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.12s ease;
+      }
+      #${ROOT_ID} .ksso-info-button:hover .ksso-tooltip,
+      #${ROOT_ID} .ksso-info-button:focus-visible .ksso-tooltip {
+        opacity: 1;
       }
       #${ROOT_ID} .ksso-question-overview {
         display: grid;
@@ -816,11 +941,16 @@
         <div class="ksso-title">授業評価</div>
         <div class="ksso-meta">K-Support / 照合スコア ${match.score}</div>
       </div>
-      <div class="ksso-faculty-profile-slot" data-ksso-faculty-profile hidden></div>
       <div class="ksso-summary">
-        <div class="ksso-metric ksso-metric--overall"><span class="ksso-label">総合満足度</span><span class="ksso-value">${renderRating(q7?.avg)}</span></div>
-        <div class="ksso-metric"><span class="ksso-label">回答率</span><span class="ksso-value">${formatPercent(evaluation.course?.answerPercent)}</span></div>
-        <div class="ksso-metric"><span class="ksso-label">回答数</span><span class="ksso-value">${total || "-"}</span></div>
+        <div class="ksso-metric ksso-metric--overall">
+          <span class="ksso-label">総合満足度</span>
+          <span class="ksso-value">${renderRating(q7?.avg)}</span>
+          <div class="ksso-metric--responses">
+            <div class="ksso-response-row"><span class="ksso-response-name">回答率</span><span class="ksso-response-value">${formatPercent(evaluation.course?.answerPercent)}</span></div>
+            <div class="ksso-response-row"><span class="ksso-response-name">回答数</span><span class="ksso-response-value">${typeof total === "number" ? `${total}件` : "-"}</span></div>
+          </div>
+        </div>
+        <div class="ksso-faculty-profile-slot" data-ksso-faculty-profile hidden></div>
       </div>
       ${renderLegend()}
       <ul class="ksso-questions">
@@ -919,6 +1049,14 @@
     );
   }
 
+  function isKSupportAuthError(response) {
+    const text = `${response?.code || ""} ${response?.message || ""}`;
+    return (
+      /Sp_CourseEvaluationSearchController/.test(text) &&
+      /アクセス権|access|permission|権限/i.test(text)
+    );
+  }
+
   async function fetchAndRender(syllabus) {
     renderStatus("授業評価", "K-Support でこの授業の評価を探しています...");
     const response = await runtimeMessage({
@@ -971,7 +1109,8 @@
 
     if (
       response?.code === "KSUPPORT_CONTEXT_MISSING" ||
-      response?.code === "KSUPPORT_CONTEXT_EXPIRED"
+      response?.code === "KSUPPORT_CONTEXT_EXPIRED" ||
+      isKSupportAuthError(response)
     ) {
       renderStatus(
         "授業評価",

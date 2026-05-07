@@ -419,16 +419,18 @@
     return true;
   }
 
-  function collectFlowLabels(value, labels = []) {
-    if (!value || typeof value !== "object") return labels;
-    if (Array.isArray(value)) {
-      for (const item of value) collectFlowLabels(item, labels);
+  function collectFlowText(value, labels = []) {
+    if (typeof value === "string") {
+      const text = value.trim();
+      if (text) labels.push(text);
       return labels;
     }
-    if (typeof value.label === "string" && value.label.trim()) {
-      labels.push(value.label);
+    if (!value || typeof value !== "object") return labels;
+    if (Array.isArray(value)) {
+      for (const item of value) collectFlowText(item, labels);
+      return labels;
     }
-    for (const child of Object.values(value)) collectFlowLabels(child, labels);
+    for (const child of Object.values(value)) collectFlowText(child, labels);
     return labels;
   }
 
@@ -443,7 +445,7 @@
   }
 
   function extractCommentsFromFlowPayload(payload) {
-    const labels = collectFlowLabels(payload);
+    const labels = collectFlowText(payload);
     const structuredText = labels.join("\n")
       .replace(/\\n/g, "\n")
       .replace(/\\"/g, "\"")

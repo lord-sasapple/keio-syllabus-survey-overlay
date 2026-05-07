@@ -72,7 +72,15 @@
     return normalizeText(evaluation?.recordId || evaluation?.course?.recordId);
   }
 
-  async function cachedEvaluationRecordIds() {
+  function evaluationHasComments(evaluation) {
+    return Array.isArray(evaluation?.commentSections) &&
+      evaluation.commentSections.some((section) =>
+        Array.isArray(section.comments) && section.comments.some((comment) => normalizeText(comment))
+      );
+  }
+
+  async function cachedEvaluationRecordIds(options = {}) {
+    const requireComments = Boolean(options.requireComments);
     const [indexedEvaluations, current] = await Promise.all([
       cacheGetAll("evaluations").catch(() => []),
       storageGet({ [STORAGE_KEYS.evaluations]: {} })
@@ -82,6 +90,7 @@
 
     for (const evaluation of [...indexedEvaluations, ...storageEvaluations]) {
       const recordId = evaluationRecordId(evaluation);
+      if (requireComments && !evaluationHasComments(evaluation)) continue;
       if (recordId) ids.add(recordId);
     }
 
@@ -218,7 +227,8 @@
     if (message?.type === "keioSurvey.syncAllEvaluations") {
       if (syncPromise) return { ok: true, started: false, message: "K-Support sync already running." };
       const targetFaculty = normalizeText(message.options?.criteria?.faculty);
-      const cachedRecordIds = await cachedEvaluationRecordIds();
+      const includeComments = message.options?.includeComments !== false;
+      const cachedRecordIds = await cachedEvaluationRecordIds({ requireComments: includeComments });
       await saveSyncProgress({
         state: "running",
         phaseName: "starting",
