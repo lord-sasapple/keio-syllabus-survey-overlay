@@ -1,10 +1,10 @@
 <!doctype html>
 <html lang="ja">
   <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Keio Survey Overlay</title>
-    <link rel="stylesheet" href="popup.css">
+    <link rel="stylesheet" href="popup.css" />
   </head>
   <body>
     <main>
@@ -43,7 +43,9 @@
         <select id="faculty-select">
           <option value="">学部を選択してください</option>
         </select>
-        <p id="faculty-note">自分の学部を選ぶと、その学部の授業評価だけを保存します。</p>
+        <p id="faculty-note">
+          自分の学部を選ぶと、その学部の授業評価だけを保存します。
+        </p>
       </section>
 
       <section class="progress-panel" aria-label="保存済みデータの状況">
@@ -71,11 +73,12 @@
             <dd id="detail-progress">- / -</dd>
           </div>
         </dl>
-        <p id="progress-note" class="progress-note">K-Supportにログインして更新すると、シラバス上で使える評価が保存されます。</p>
+        <p id="progress-note" class="progress-note">
+          K-Supportにログインして更新すると、シラバス上で使える評価が保存されます。
+        </p>
         <p id="cache-detail" class="cache-detail">保存済み評価 - 件</p>
       </section>
 
-      <p class="privacy-note">保存先はこのブラウザ内だけです。K-SupportのID・パスワード・Cookieは保存しません。</p>
       <button id="open-ksupport" type="button">K-Supportを開く</button>
       <button id="sync-all" type="button">評価データを更新</button>
       <p id="debug-message" class="debug-message"></p>
