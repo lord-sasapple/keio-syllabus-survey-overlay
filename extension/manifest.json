@@ -6,7 +6,8 @@
   "permissions": ["storage", "tabs", "scripting"],
   "host_permissions": [
     "https://gslbs.keio.jp/*",
-    "https://keiouniversity.my.site.com/*"
+    "https://keiouniversity.my.site.com/*",
+    "https://www.keio.ac.jp/*"
   ],
   "action": {
     "default_title": "Keio Survey Overlay",
