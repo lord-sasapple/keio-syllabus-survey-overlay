@@ -1075,8 +1075,10 @@
     );
   }
 
-  async function fetchAndRender(syllabus) {
-    renderStatus("授業評価", "K-Support でこの授業の評価を探しています...");
+  async function fetchAndRender(syllabus, existingMatch = null) {
+    if (!existingMatch) {
+      renderStatus("授業評価", "K-Support でこの授業の評価を探しています...");
+    }
     const response = await runtimeMessage(
       {
         type: "keioSurvey.fetchEvaluationForSyllabus",
@@ -1086,15 +1088,19 @@
     );
 
     if (response?.ok && response.evaluation) {
+      const responseScore =
+        response.match?.score ??
+        scoreCourseMatch(syllabus, response.evaluation.course || {});
+      if (existingMatch && existingMatch.score >= responseScore) {
+        return;
+      }
       await saveEvaluation(response.evaluation);
       renderOverlay({
         syllabus,
         evaluation: normalizeEvaluation(response.evaluation, {
           includeComments: true,
         }),
-        score:
-          response.match?.score ??
-          scoreCourseMatch(syllabus, response.evaluation.course || {}),
+        score: responseScore,
       });
       return;
     }
@@ -1187,10 +1193,11 @@
     ]);
     if (match) {
       renderOverlay({ ...match, syllabus });
+      return;
     } else {
       renderStatus("授業評価", "保存済みの評価を確認中です...");
     }
-    void fetchAndRender(syllabus);
+    void fetchAndRender(syllabus, match);
   }
 
   void main();
