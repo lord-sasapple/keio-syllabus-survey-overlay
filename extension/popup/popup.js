@@ -30,6 +30,7 @@
     chrome.runtime.sendMessage({ type: "keioSurvey.ksupportStatus" }, (response) => {
       if (chrome.runtime.lastError || !response?.ok) {
         setHidden("login-panel", false);
+        setHidden("open-ksupport", false);
         setText("status-title", "K-Supportを開いてください");
         setText("status-note", "ログイン後にシラバス一覧を開くと、表示範囲の授業評価を自動で確認します。");
         return;
@@ -37,7 +38,8 @@
       const tabs = Array.isArray(response.tabs) ? response.tabs : [];
       const ready = tabs.some((tab) => tab.ok && tab.hasToken);
       setHidden("login-panel", ready);
-      setText("status-title", ready ? "表示範囲から自動取得します" : "K-Supportを開いてください");
+      setHidden("open-ksupport", ready);
+      setText("status-title", ready ? "シラバス上で自動表示します" : "K-Supportを開いてください");
       setText("status-note", ready
         ? "シラバス一覧をスクロールすると、近くの授業評価を順番に保存して表示します。"
         : "ログイン後にシラバス一覧を開くと、表示範囲の授業評価を自動で確認します。"
