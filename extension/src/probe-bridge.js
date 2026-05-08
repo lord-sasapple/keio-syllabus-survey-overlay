@@ -17,14 +17,6 @@
   async function appendEvent(event) {
     if (event?.kind === "ksupport.auraSession") {
       await storageSet({
-        [STORAGE_KEYS.ksupportSession]: {
-          context: event.context,
-          token: event.token,
-          pageURI: event.pageURI || "",
-          origin: event.origin || location.origin,
-          capturedAt: event.capturedAt || Date.now(),
-          updatedAt: event.at || new Date().toISOString()
-        },
         [STORAGE_KEYS.lastSeen]: {
           url: location.href,
           title: document.title,
