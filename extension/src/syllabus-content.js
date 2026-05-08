@@ -13,6 +13,7 @@
   const ROOT_ID = "keio-survey-overlay-root";
   const STYLE_ID = "keio-survey-overlay-style";
   const FETCH_TIMEOUT_MS = 45 * 1000;
+  const MISS_TTL_MS = 14 * 24 * 60 * 60 * 1000;
   const CHOICE_LABELS = [
     "1 そう思わない",
     "2 あまりそう思わない",
@@ -121,6 +122,36 @@
     return value && typeof value === "object" && !Array.isArray(value)
       ? value
       : {};
+  }
+
+  function courseFetchKey(course) {
+    return compactCourseKey(course) || [
+      normalizeText(course.courseName),
+      normalizeText(course.lecturer).replace(/\s+/g, ""),
+      normalizeText(course.registrationNumber),
+    ].join("|");
+  }
+
+  function hasFreshMiss(missStore, key) {
+    const miss = objectStore(missStore)[key];
+    if (!miss) return false;
+    const at = Date.parse(miss.at || "");
+    return Number.isFinite(at) && Date.now() - at < MISS_TTL_MS;
+  }
+
+  async function rememberMiss(key, course, code = "NO_MATCH") {
+    if (!key) return;
+    const current = await storageGet({ [STORAGE_KEYS.evaluationMisses]: {} });
+    const misses = objectStore(current[STORAGE_KEYS.evaluationMisses]);
+    misses[key] = {
+      at: new Date().toISOString(),
+      code,
+      courseName: course.courseName,
+      lecturer: course.lecturer,
+      semester: course.semester,
+      campus: course.campus,
+    };
+    await storageSet({ [STORAGE_KEYS.evaluationMisses]: misses });
   }
 
   function uniqueEvaluations(store) {
@@ -435,6 +466,33 @@
     `;
   }
 
+  function ksupportEvaluationUrl(evaluation) {
+    const recordId = normalizeText(
+      evaluation?.course?.recordId || evaluation?.recordId,
+    );
+    if (!recordId) return "";
+    return `https://keiouniversity.my.site.com/students/s/course-offering-schedule/${encodeURIComponent(recordId)}/csh163408`;
+  }
+
+  function renderSourceMeta(evaluation) {
+    const course = evaluation?.course || {};
+    const url = ksupportEvaluationUrl(evaluation);
+    const label = normalizeText(
+      `${course.semester || ""} ${course.courseName || ""} 授業評価`,
+    ) || "K-Support 授業評価";
+    if (!url) {
+      return `<div class="ksso-meta">ソース: ${escapeHtml(label)}</div>`;
+    }
+    return `
+      <div class="ksso-meta">
+        ソース:
+        <a class="ksso-source-link" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">
+          ${escapeHtml(label)}<span class="ksso-external-mark" aria-hidden="true">↗︎</span>
+        </a>
+      </div>
+    `;
+  }
+
   async function hydrateFacultyProfile(root, syllabus, evaluation) {
     const slot = root.querySelector("[data-ksso-faculty-profile]");
     if (!slot) return;
@@ -487,7 +545,16 @@
       #${ROOT_ID} .ksso-meta {
         color: #64748b;
         font-size: 12px;
-        white-space: nowrap;
+        text-align: right;
+      }
+      #${ROOT_ID} .ksso-source-link {
+        color: #475569;
+        font-weight: 700;
+        text-decoration: none;
+      }
+      #${ROOT_ID} .ksso-source-link:hover {
+        color: #1d4ed8;
+        text-decoration: underline;
       }
       #${ROOT_ID} .ksso-faculty-profile-slot[hidden] {
         display: none;
@@ -956,7 +1023,7 @@
     root.innerHTML = `
       <div class="ksso-top">
         <div class="ksso-title">授業評価</div>
-        <div class="ksso-meta">K-Support / 照合スコア ${match.score}</div>
+        ${renderSourceMeta(evaluation)}
       </div>
       <div class="ksso-summary">
         <div class="ksso-metric ksso-metric--overall">
@@ -1029,6 +1096,13 @@
     `;
   }
 
+  function renderNoEvaluationFound() {
+    renderStatus(
+      "授業評価",
+      "この授業の公開評価は見つかりませんでした。",
+    );
+  }
+
   function bindActions(syllabus) {
     document.addEventListener("click", (event) => {
       const button = event.target.closest?.(`#${ROOT_ID} [data-ksso-action]`);
@@ -1038,20 +1112,9 @@
         void runtimeMessage({ type: "keioSurvey.openKSupport" });
       }
       if (action === "retry") {
-        void fetchAndRender(syllabus, { force: true });
+        void fetchAndRender(syllabus);
       }
     });
-  }
-
-  function candidateSummary(candidates) {
-    if (!Array.isArray(candidates) || !candidates.length) return "";
-    return candidates
-      .slice(0, 3)
-      .map(
-        (course) =>
-          `${course.courseName || "-"} / ${course.lecturer || "-"} / ${course.semester || "-"} / score ${course.score ?? "-"}`,
-      )
-      .join("\n");
   }
 
   function isKSupportConnectionError(response) {
@@ -1076,6 +1139,7 @@
   }
 
   async function fetchAndRender(syllabus, existingMatch = null) {
+    const missKey = courseFetchKey(syllabus);
     if (!existingMatch) {
       renderStatus("授業評価", "K-Support でこの授業の評価を探しています...");
     }
@@ -1108,13 +1172,8 @@
     if (isKSupportConnectionError(response)) {
       renderStatus(
         "授業評価",
-        [
-          "保存済みの評価はまだありません。",
-          "評価を見るには K-Support にログインしてから再取得してください。",
-        ].join("\n"),
+        "この授業の公開評価はまだ確認できていません。",
         {
-          openKSupport: true,
-          openKSupportLabel: "K-Supportでログイン",
           retry: true,
         },
       );
@@ -1124,10 +1183,8 @@
     if (response?.code === "KSUPPORT_TAB_NOT_FOUND") {
       renderStatus(
         "授業評価",
-        "保存済みの評価はまだありません。K-Support にログインすると、この授業の評価を探せます。",
+        "この授業の公開評価はまだ確認できていません。",
         {
-          openKSupport: true,
-          openKSupportLabel: "K-Supportでログイン",
           retry: true,
         },
       );
@@ -1141,10 +1198,8 @@
     ) {
       renderStatus(
         "授業評価",
-        "K-Support のログイン状態を確認できませんでした。K-Support を開くか再読み込みしてから再取得してください。",
+        "この授業の公開評価を確認できませんでした。",
         {
-          openKSupport: true,
-          openKSupportLabel: "K-Supportでログイン",
           retry: true,
         },
       );
@@ -1152,14 +1207,8 @@
     }
 
     if (response?.code === "NO_MATCH") {
-      const summary = candidateSummary(response.candidates);
-      renderStatus(
-        "授業評価",
-        `この授業に対応する公開評価は見つかりませんでした。${summary ? `\n近い候補:\n${summary}` : ""}`,
-        {
-          retry: true,
-        },
-      );
+      await rememberMiss(missKey, syllabus, response.code);
+      renderNoEvaluationFound();
       return;
     }
 
@@ -1185,7 +1234,10 @@
     }
     bindActions(syllabus);
 
-    const current = await storageGet({ [STORAGE_KEYS.evaluations]: {} });
+    const current = await storageGet({
+      [STORAGE_KEYS.evaluations]: {},
+      [STORAGE_KEYS.evaluationMisses]: {},
+    });
     const cachedEvaluations = await cacheGetAll("evaluations").catch(() => []);
     const match = findBestEvaluation(syllabus, [
       ...cachedEvaluations,
@@ -1194,9 +1246,17 @@
     if (match) {
       renderOverlay({ ...match, syllabus });
       return;
-    } else {
-      renderStatus("授業評価", "保存済みの評価を確認中です...");
     }
+    if (
+      hasFreshMiss(
+        current[STORAGE_KEYS.evaluationMisses],
+        courseFetchKey(syllabus),
+      )
+    ) {
+      renderNoEvaluationFound();
+      return;
+    }
+    renderStatus("授業評価", "保存済みの評価を確認中です...");
     void fetchAndRender(syllabus, match);
   }
 
