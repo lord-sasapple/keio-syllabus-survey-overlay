@@ -115,12 +115,30 @@ K-Support ページに、拡張機能に同梱されたスクリプトを注入�
 
 このリポジトリは Manifest V3 の Chrome 拡張機能です。
 
-ローカルで読み込む手順:
+GitHub から取得して使う手順:
+
+```bash
+git clone https://github.com/lord-sasapple/keio-syllabus-survey-overlay.git
+cd keio-syllabus-survey-overlay
+```
+
+Chrome に読み込む手順:
 
 1. Chrome で `chrome://extensions` を開きます。
 2. 右上の「デベロッパー モード」を有効にします。
 3. 「パッケージ化されていない拡張機能を読み込む」を押します。
-4. このリポジトリの `extension/` ディレクトリを選択します。
+4. clone したリポジトリ内の `extension/` ディレクトリを選択します。
+5. Syllabus Lens のアイコンを開き、自分の学部を選択します。
+6. K-Support にログインし、必要に応じて評価データを保存します。
+
+更新する手順:
+
+```bash
+cd keio-syllabus-survey-overlay
+git pull
+```
+
+更新後は `chrome://extensions` で Syllabus Lens の再読み込みボタンを押してください。
 
 構文チェック:
 
