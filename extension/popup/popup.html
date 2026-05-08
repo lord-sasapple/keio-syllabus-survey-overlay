@@ -10,87 +10,22 @@
     <main>
       <header>
         <h1>Syllabus Lens 💬</h1>
-        <p>シラバスにみんなの授業アンケートの結果が表示されます</p>
+        <p>シラバス一覧で、近くに表示される授業から順に評価を保存します。</p>
       </header>
 
-      <section class="settings-panel" aria-label="自分の学部">
-        <label for="faculty-select">自分の学部</label>
-        <select id="faculty-select">
-          <option value="">学部を選択してください</option>
-        </select>
-        <p id="faculty-note">
-          自分の学部を選ぶと、その学部の授業評価だけを保存します。
-        </p>
-      </section>
-
-      <section
-        id="login-panel"
-        class="login-panel"
-        aria-label="K-Supportログイン"
-        hidden
-      >
+      <section id="login-panel" class="login-panel" aria-label="K-Supportログイン" hidden>
         <h2>K-Supportへのログインが必要です</h2>
-        <p>評価データを更新するには、K-Supportを開いてログインしてください。</p>
-        <button id="open-ksupport" type="button">K-Supportを開く</button>
+        <p>授業評価を取得するには、K-Supportを開いてログインしてください。</p>
       </section>
 
-      <section class="progress-panel" aria-label="保存済みデータの状況">
-        <div class="progress-head">
-          <div>
-            <h2>データ更新</h2>
-            <p id="progress-stage">確認中</p>
-          </div>
-          <strong id="progress-percent">-</strong>
-        </div>
-        <div class="progress-track" aria-hidden="true">
-          <div id="progress-bar" class="progress-bar"></div>
-        </div>
-        <dl class="progress-grid">
-          <div>
-            <dt>対象授業</dt>
-            <dd id="expected-total">-</dd>
-          </div>
-          <div>
-            <dt>見つけた授業</dt>
-            <dd id="search-found">-</dd>
-          </div>
-          <div>
-            <dt>保存済み</dt>
-            <dd id="detail-progress">- / -</dd>
-          </div>
-        </dl>
-        <p id="progress-note" class="progress-note">
-          K-Supportにログインして更新すると、シラバス上で使える評価が保存されます。
+      <section class="status-panel" aria-label="使い方">
+        <h2 id="status-title">準備を確認中</h2>
+        <p id="status-note">
+          シラバス一覧を開くと、表示範囲と少し先の授業評価を自動で確認します。
         </p>
-        <p id="cache-detail" class="cache-detail">保存済み評価 - 件</p>
       </section>
 
-      <button id="sync-all" type="button">評価データを更新</button>
-      <button id="force-refresh" class="secondary-button" type="button" hidden>
-        すべて再取得
-      </button>
-
-      <section
-        id="force-confirm"
-        class="confirm-panel"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="force-confirm-title"
-        hidden
-      >
-        <h2 id="force-confirm-title">アンケート結果を更新します</h2>
-        <p>5〜10分ほど時間がかかる場合があります。</p>
-        <div class="confirm-actions">
-          <button
-            id="force-confirm-cancel"
-            class="secondary-button"
-            type="button"
-          >
-            キャンセル
-          </button>
-          <button id="force-confirm-run" type="button">更新する</button>
-        </div>
-      </section>
+      <button id="open-ksupport" type="button">K-Supportを開く</button>
       <p id="debug-message" class="debug-message"></p>
     </main>
     <script src="../src/shared.js"></script>

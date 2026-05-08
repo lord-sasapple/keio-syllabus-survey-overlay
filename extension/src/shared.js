@@ -2,9 +2,9 @@
   const STORAGE_KEYS = {
     courses: "keioSurvey.courses",
     evaluations: "keioSurvey.evaluations",
+    evaluationMisses: "keioSurvey.evaluationMisses",
     networkEvents: "keioSurvey.networkEvents",
     settings: "keioSurvey.settings",
-    ksupportSession: "keioSurvey.ksupportSession",
     lastSeen: "keioSurvey.lastSeen",
     lastSyncAllEvaluations: "keioSurvey.lastSyncAllEvaluations",
     lastSyncProgress: "keioSurvey.lastSyncProgress"
