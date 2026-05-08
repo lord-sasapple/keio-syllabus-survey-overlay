@@ -481,9 +481,8 @@
   function main() {
     setupObserver();
     void renderResultList();
-    const target = document.querySelector("#search-result-timetable") || document.body;
     const mutationObserver = new MutationObserver(() => scheduleRender(false));
-    mutationObserver.observe(target, { childList: true, subtree: true });
+    mutationObserver.observe(document.body, { childList: true, subtree: true });
 
     chrome.storage.onChanged.addListener((changes, areaName) => {
       if (areaName !== "local") return;

@@ -11,11 +11,11 @@ main {
 }
 
 header {
-  margin-bottom: 14px;
+  margin-bottom: 16px;
 }
 
 h1 {
-  margin: 0 0 8px;
+  margin: 0;
   font-size: 22px;
   line-height: 1.25;
 }
@@ -33,8 +33,7 @@ p {
   font-size: 14px;
 }
 
-.login-panel,
-.status-panel {
+.login-panel {
   display: grid;
   gap: 8px;
   margin: 0 0 14px;
@@ -58,12 +57,16 @@ p {
   color: #9a3412;
 }
 
-.login-panel p,
-.status-panel p {
+.login-panel p {
   font-size: 12px;
 }
 
+.action-link,
 button {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 100%;
   margin-top: 10px;
   border: 1px solid #cbd5e1;
@@ -75,10 +78,28 @@ button {
   font: inherit;
   font-size: 15px;
   font-weight: 800;
+  line-height: 1.3;
+  text-align: center;
+  text-decoration: none;
 }
 
+.action-link--primary {
+  border-color: #1d4ed8;
+  background: #2563eb;
+  color: #ffffff;
+}
+
+.action-link:hover,
 button:hover {
   background: #f1f5f9;
+}
+
+.action-link--primary:hover {
+  background: #1d4ed8;
+}
+
+button[hidden] {
+  display: none;
 }
 
 .debug-message {
