@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Syllabus Lens",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "慶應義塾大学のシラバス画面に、K-Support の授業評価結果を見やすく表示します。",
   "permissions": ["storage", "tabs", "scripting"],
   "host_permissions": [
