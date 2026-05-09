@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Syllabus Lens for Keio | 授業レビューをシラバスでひと目で確認",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "慶應義塾大学のシラバス画面に、K-Support の授業評価結果を見やすく表示します。",
   "permissions": ["storage", "tabs", "scripting"],
   "host_permissions": [
