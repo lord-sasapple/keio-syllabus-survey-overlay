@@ -11,6 +11,7 @@
   } = window.KeioSurveyShared;
 
   const ROOT_ID = "keio-survey-overlay-root";
+  const BEAR_ROOT_ID = "keio-survey-bear-root";
   const STYLE_ID = "keio-survey-overlay-style";
   const FETCH_TIMEOUT_MS = 45 * 1000;
   const MISS_TTL_MS = 14 * 24 * 60 * 60 * 1000;
@@ -23,6 +24,8 @@
   ];
   // const CHOICE_COLORS = ["#f27b6b", "#f6ba9c", "#c39bfa", "#9abaf7", "#5681ee"];
   const CHOICE_COLORS = ["#5681ee", "#9ab3f2", "#f7cca0", "#f9c366", "#f59e0b"];
+  const BEAR_FALLBACK_COMMENT =
+    "コメント欄は静かめだね。つまり、履修判断まで自力で鍛えてくれるタイプかな。";
 
   function readText(selector, root = document) {
     return normalizeText(root.querySelector(selector)?.textContent || "");
@@ -125,11 +128,14 @@
   }
 
   function courseFetchKey(course) {
-    return compactCourseKey(course) || [
-      normalizeText(course.courseName),
-      normalizeText(course.lecturer).replace(/\s+/g, ""),
-      normalizeText(course.registrationNumber),
-    ].join("|");
+    return (
+      compactCourseKey(course) ||
+      [
+        normalizeText(course.courseName),
+        normalizeText(course.lecturer).replace(/\s+/g, ""),
+        normalizeText(course.registrationNumber),
+      ].join("|")
+    );
   }
 
   function hasFreshMiss(missStore, key) {
@@ -412,6 +418,251 @@
     `;
   }
 
+  function flattenComments(sections) {
+    return normalizeCommentSections(sections)
+      .flatMap((section) => section.comments)
+      .map((comment) => normalizeText(comment))
+      .filter(Boolean);
+  }
+
+  function commentHash(comments) {
+    return comments
+      .join("|")
+      .split("")
+      .reduce((hash, char) => {
+        return (hash * 31 + char.charCodeAt(0)) >>> 0;
+      }, 7);
+  }
+
+  function includesAny(text, patterns) {
+    return patterns.some((pattern) => pattern.test(text));
+  }
+
+  function pickByHash(values, hash) {
+    if (!values.length) return BEAR_FALLBACK_COMMENT;
+    return values[hash % values.length];
+  }
+
+  function buildBearFallbackComment(comments) {
+    if (!comments.length) return BEAR_FALLBACK_COMMENT;
+    const text = normalizeText(comments.join(" "));
+    const hash = commentHash(comments);
+    const candidates = [];
+
+    if (includesAny(text, [/課題|レポート|宿題|負荷|重い|多い|忙し|大変/])) {
+      candidates.push(
+        "授業を取ったつもりが、課題の方から履修してくるタイプっぽいね。",
+        "内容より課題が主役になりそう。睡眠時間、先に退学届を出してるかも。",
+      );
+    }
+    if (
+      includesAny(text, [
+        /評価|基準|採点|成績|ルーブリック|わかりづら|分かりづら|不明/,
+      ])
+    ) {
+      candidates.push(
+        "評価基準が霧なら、努力は遭難するね。コンパス持って履修しよ。",
+        "採点ルールが見えない授業、学生だけ暗闇でダンスさせられがち。",
+      );
+    }
+    if (includesAny(text, [/グループ|班|発表|ディスカッション|議論|温度差/])) {
+      candidates.push(
+        "グループワークは学びもあるけど、メンバーガチャの筐体でもあるね。",
+        "議論できるのは良いね。温度差で風邪ひく準備だけしておこ。",
+      );
+    }
+    if (
+      includesAny(text, [
+        /わかりやす|分かりやす|丁寧|質問|面白|楽しい|よかった|良かった/,
+      ])
+    ) {
+      candidates.push(
+        "先生は当たりっぽいね。あとは締切が人の心を持ってるかだけ。",
+        "評判は良さげ。ただ褒め言葉の裏に課題モンスターが寝てるかも。",
+      );
+    }
+    if (
+      includesAny(text, [/資料|スライド|説明|進行|連絡|遅い|早い|オンライン/])
+    ) {
+      candidates.push(
+        "運営の相性は見とこ。連絡が迷子になる授業、学生も一緒に遭難するから。",
+        "内容の前に進行が勝負っぽいね。授業というより交通整理の才能テスト。",
+      );
+    }
+
+    if (!candidates.length) {
+      candidates.push(
+        "良い点も不安もあるね。履修登録ボタンがちょっと笑って見えるタイプ。",
+        "コメントは静かだけど油断は禁物。静かな沼ほど靴を返してくれない。",
+      );
+    }
+    return pickByHash(candidates, hash);
+  }
+
+  function bearSystemPrompt() {
+    return `
+あなたは黄色と白の横ボーダー水着を着た、履修登録に脳を焼かれたしろくまのマスコットです。
+履修を迷っている友だちの横で、授業レビューを読んでかなり毒のある感想を日本語で1文だけ返してください。
+条件:
+- 皮肉はかなり強め
+- でも学生や教員への人格攻撃、差別、容姿いじりはしない
+- 授業設計・課題量・評価基準・運営・履修リスクをネタにする
+- 丁寧語・敬語を使わない
+- 「ですね」「でしょう」「ようです」「かもしれません」を使わない
+- 「一方」「貢献」「疑問が残る」「改善点」「課題の両面」のような講評っぽい言葉を使わない
+- 30字から65字くらい
+- 断定しすぎない
+- 授業レビュー本文をそのまま引用しない
+- 個人が特定されそうな内容には触れない
+文体例:
+- 先生は良さそう。ただ英語力アップは、別売りオプション扱いかもね。
+- プレゼンは鍛えられそう。英語力は校舎の外で自力発電っぽい。
+- 評価基準が見えないなら、努力が夜道で財布落とすタイプの授業だね。
+- 課題が多い授業、単位じゃなくて生活リズムを収穫してくるんだよな。
+`.trim();
+  }
+
+  function formatBearPrompt(comments) {
+    return `
+授業レビュー:
+${comments
+  .slice(0, 8)
+  .map((comment, index) => `${index + 1}. ${comment}`)
+  .join("\n")}
+`.trim();
+  }
+
+  async function generateBearComment(comments) {
+    const fallback = buildBearFallbackComment(comments);
+    try {
+      if (
+        !comments.length ||
+        typeof window === "undefined" ||
+        !("LanguageModel" in window)
+      ) {
+        return fallback;
+      }
+      const modelOptions = {
+        expectedInputs: [{ type: "text", languages: ["ja"] }],
+        expectedOutputs: [{ type: "text", languages: ["ja"] }],
+      };
+      const availability =
+        await window.LanguageModel.availability(modelOptions);
+      if (availability === "unavailable") return fallback;
+      let session = null;
+      try {
+        session = await window.LanguageModel.create({
+          ...modelOptions,
+          initialPrompts: [{ role: "system", content: bearSystemPrompt() }],
+        });
+        const result = await session.prompt(formatBearPrompt(comments));
+        const text = normalizeText(result).replace(/^["「]+|["」]+$/g, "");
+        return text || fallback;
+      } finally {
+        session?.destroy?.();
+      }
+    } catch (error) {
+      console.warn("Syllabus Lens bear comment failed", error);
+      return fallback;
+    }
+  }
+
+  function renderBearSvg(thinking = false) {
+    const eyes = thinking
+      ? `
+        <g>
+          <path d="M92 106 Q102 99 112 106" fill="none" stroke="#06112e" stroke-width="4" stroke-linecap="round" />
+          <path d="M148 106 Q158 99 168 106" fill="none" stroke="#06112e" stroke-width="4" stroke-linecap="round" />
+        </g>
+      `
+      : `
+        <g>
+          <ellipse cx="102" cy="106" rx="8.5" ry="11" fill="#06112e" />
+          <ellipse cx="158" cy="106" rx="8.5" ry="11" fill="#06112e" />
+          <circle cx="105" cy="101" r="2.4" fill="white" opacity="0.95" />
+          <circle cx="161" cy="101" r="2.4" fill="white" opacity="0.95" />
+        </g>
+      `;
+    return `
+      <svg class="ksso-bear-svg" viewBox="0 0 260 320" role="img" aria-label="Syllabus Lens のクマのマスコット">
+        <defs>
+          <radialGradient id="ksso-bear-fur" cx="42%" cy="30%" r="75%">
+            <stop offset="0%" stop-color="#fffaf0" />
+            <stop offset="100%" stop-color="#efe1c9" />
+          </radialGradient>
+          <linearGradient id="ksso-bear-stripe" x1="0" x2="1">
+            <stop offset="0%" stop-color="#f7b500" />
+            <stop offset="100%" stop-color="#ffd25a" />
+          </linearGradient>
+          <clipPath id="ksso-bear-romper">
+            <path d="M78 174 C82 143 101 126 130 126 C159 126 178 143 182 174 L190 238 C194 269 173 291 145 291 L115 291 C87 291 66 269 70 238Z" />
+          </clipPath>
+        </defs>
+        <ellipse cx="130" cy="302" rx="70" ry="12" fill="#d6c5ad" opacity="0.28" />
+        <path d="M78 174 C82 143 101 126 130 126 C159 126 178 143 182 174 L190 238 C194 269 173 291 145 291 L115 291 C87 291 66 269 70 238Z" fill="url(#ksso-bear-fur)" />
+        <g clip-path="url(#ksso-bear-romper)">
+          <rect x="66" y="132" width="128" height="160" fill="#fffdf6" />
+          <rect x="66" y="144" width="128" height="20" fill="url(#ksso-bear-stripe)" />
+          <rect x="66" y="188" width="128" height="21" fill="url(#ksso-bear-stripe)" />
+          <rect x="66" y="232" width="128" height="21" fill="url(#ksso-bear-stripe)" />
+          <rect x="66" y="276" width="128" height="19" fill="url(#ksso-bear-stripe)" />
+        </g>
+        <path d="M86 154 C105 136 155 136 174 154" fill="none" stroke="#fff7e9" stroke-width="18" stroke-linecap="round" />
+        <path d="M84 164 C105 150 155 150 176 164" fill="none" stroke="#f7b500" stroke-width="7" stroke-linecap="round" />
+        <path d="M73 165 C54 173 45 197 51 222 C57 247 73 258 88 247 C101 237 103 206 94 185 C89 173 81 164 73 165Z" fill="url(#ksso-bear-fur)" />
+        <circle cx="58" cy="170" r="8" fill="#fff8ea" opacity="0.8" />
+        <path d="M187 165 C206 173 215 197 209 222 C203 247 187 258 172 247 C159 237 157 206 166 185 C171 173 179 164 187 165Z" fill="url(#ksso-bear-fur)" />
+        <circle cx="202" cy="170" r="8" fill="#fff8ea" opacity="0.8" />
+        <ellipse cx="102" cy="286" rx="27" ry="21" fill="url(#ksso-bear-fur)" />
+        <path d="M91 287 L91 298" stroke="#9d7d61" stroke-width="3" stroke-linecap="round" opacity="0.65" />
+        <path d="M104 289 L104 300" stroke="#9d7d61" stroke-width="3" stroke-linecap="round" opacity="0.65" />
+        <ellipse cx="158" cy="286" rx="27" ry="21" fill="url(#ksso-bear-fur)" />
+        <path d="M150 289 L150 300" stroke="#9d7d61" stroke-width="3" stroke-linecap="round" opacity="0.65" />
+        <path d="M163 287 L163 298" stroke="#9d7d61" stroke-width="3" stroke-linecap="round" opacity="0.65" />
+        <circle cx="82" cy="66" r="29" fill="url(#ksso-bear-fur)" />
+        <circle cx="178" cy="66" r="29" fill="url(#ksso-bear-fur)" />
+        <circle cx="83" cy="68" r="16" fill="#fff6e8" opacity="0.72" />
+        <circle cx="177" cy="68" r="16" fill="#fff6e8" opacity="0.72" />
+        <circle cx="130" cy="104" r="68" fill="url(#ksso-bear-fur)" />
+        ${eyes}
+        <ellipse cx="130" cy="129" rx="18" ry="14" fill="#4b2c20" />
+        <path d="M130 142 L130 154" stroke="#4b2c20" stroke-width="4" stroke-linecap="round" />
+        <path d="M112 153 Q130 164 148 153" fill="none" stroke="#4b2c20" stroke-width="4" stroke-linecap="round" />
+      </svg>
+    `;
+  }
+
+  function removeBearMascot() {
+    document.getElementById(BEAR_ROOT_ID)?.remove();
+  }
+
+  function mountBearMascot(evaluation) {
+    const comments = flattenComments(evaluation.commentSections);
+    removeBearMascot();
+    const root = document.createElement("aside");
+    root.id = BEAR_ROOT_ID;
+    root.setAttribute("aria-label", "クマの授業コメント");
+    root.innerHTML = `
+      <button type="button" class="ksso-bear-close" aria-label="クマを閉じる">×</button>
+      <div class="ksso-bear-bubble" data-ksso-bear-comment>
+        ${escapeHtml(comments.length ? "みんなどんな感じで授業受けてるのかな..." : buildBearFallbackComment(comments))}
+      </div>
+      <div class="ksso-bear-stage" data-ksso-bear-stage>${renderBearSvg(Boolean(comments.length))}</div>
+    `;
+    document.body.appendChild(root);
+    root
+      .querySelector(".ksso-bear-close")
+      ?.addEventListener("click", removeBearMascot);
+    if (!comments.length) return;
+    void generateBearComment(comments).then((comment) => {
+      if (!root.isConnected) return;
+      const bubble = root.querySelector("[data-ksso-bear-comment]");
+      const stage = root.querySelector("[data-ksso-bear-stage]");
+      if (bubble) bubble.textContent = comment;
+      if (stage) stage.innerHTML = renderBearSvg(false);
+    });
+  }
+
   function renderQuestion(question) {
     const display = displayQuestion(question);
     const counts = display.counts;
@@ -477,9 +728,10 @@
   function renderSourceMeta(evaluation) {
     const course = evaluation?.course || {};
     const url = ksupportEvaluationUrl(evaluation);
-    const label = normalizeText(
-      `${course.semester || ""} ${course.courseName || ""} 授業評価`,
-    ) || "K-Support 授業評価";
+    const label =
+      normalizeText(
+        `${course.semester || ""} ${course.courseName || ""} 授業評価`,
+      ) || "K-Support 授業評価";
     if (!url) {
       return `<div class="ksso-meta">ソース: ${escapeHtml(label)}</div>`;
     }
@@ -981,6 +1233,84 @@
         border-left-color: #3b82f6;
         background: #eff6ff;
       }
+      #${BEAR_ROOT_ID} {
+        position: fixed;
+        right: max(16px, env(safe-area-inset-right));
+        bottom: max(14px, env(safe-area-inset-bottom));
+        z-index: 2147483646;
+        display: grid;
+        justify-items: end;
+        width: min(340px, calc(100vw - 24px));
+        color: #172554;
+        font-family: inherit;
+        pointer-events: none;
+      }
+      #${BEAR_ROOT_ID} .ksso-bear-close {
+        padding: 0;
+        position: absolute;
+        top: 12px;
+        right: 28px;
+        z-index: 2;
+        display: grid;
+        place-items: center;
+        width: 24px;
+        height: 24px;
+        border: 1px solid #f8d67a;
+        border-radius: 999px;
+        background: #ffffff;
+        color: #854d0e;
+        cursor: pointer;
+        font: inherit;
+        font-size: 16px;
+        font-weight: 800;
+        line-height: 1;
+        pointer-events: auto;
+      }
+      #${BEAR_ROOT_ID} .ksso-bear-close:hover,
+      #${BEAR_ROOT_ID} .ksso-bear-close:focus-visible {
+        background: #fffbeb;
+      }
+      #${BEAR_ROOT_ID} .ksso-bear-bubble {
+        position: relative;
+        width: min(300px, calc(100vw - 40px));
+        margin: 0 18px -10px 0;
+        border: 2px solid #f6c453;
+        border-radius: 18px;
+        padding: 13px 38px 13px 15px;
+        background: #ffffff;
+        box-shadow: 0 12px 28px rgba(15, 35, 95, 0.16);
+        font-size: 14px;
+        font-weight: 800;
+        line-height: 1.55;
+        letter-spacing: 0;
+        word-break: break-word;
+        box-sizing: border-box;
+        pointer-events: auto;
+      }
+      #${BEAR_ROOT_ID} .ksso-bear-bubble::after {
+        content: "";
+        position: absolute;
+        right: 54px;
+        bottom: -10px;
+        width: 18px;
+        height: 18px;
+        border-right: 2px solid #f6c453;
+        border-bottom: 2px solid #f6c453;
+        background: #ffffff;
+        transform: rotate(45deg);
+      }
+      #${BEAR_ROOT_ID} .ksso-bear-stage {
+        width: 132px;
+        height: 162px;
+        margin-right: 16px;
+        filter: drop-shadow(0 16px 18px rgba(15, 35, 95, 0.16));
+        pointer-events: none;
+      }
+      #${BEAR_ROOT_ID} .ksso-bear-svg {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
       @media (max-width: 720px) {
         #${ROOT_ID} .ksso-summary,
         #${ROOT_ID} .ksso-questions {
@@ -1001,6 +1331,24 @@
         #${ROOT_ID} .ksso-top {
           align-items: flex-start;
           flex-direction: column;
+        }
+        #${BEAR_ROOT_ID} {
+          width: min(250px, calc(100vw - 18px));
+        }
+        #${BEAR_ROOT_ID} .ksso-bear-bubble {
+          width: min(220px, calc(100vw - 30px));
+          margin-right: 8px;
+          padding: 10px 34px 10px 12px;
+          font-size: 12px;
+        }
+        #${BEAR_ROOT_ID} .ksso-bear-close {
+          top: 8px;
+          right: 16px;
+        }
+        #${BEAR_ROOT_ID} .ksso-bear-stage {
+          width: 86px;
+          height: 106px;
+          margin-right: 12px;
         }
       }
     `;
@@ -1053,6 +1401,7 @@
       anchor.insertAdjacentElement("afterend", root);
     }
     void hydrateFacultyProfile(root, match.syllabus || {}, evaluation);
+    mountBearMascot(evaluation);
   }
 
   function mountRoot() {
@@ -1074,6 +1423,7 @@
   }
 
   function renderStatus(title, message, options = {}) {
+    removeBearMascot();
     const root = mountRoot();
     const actions = [];
     if (options.openKSupport) {
@@ -1097,10 +1447,7 @@
   }
 
   function renderNoEvaluationFound() {
-    renderStatus(
-      "授業評価",
-      "この授業の公開評価は見つかりませんでした。",
-    );
+    renderStatus("授業評価", "この授業の公開評価は見つかりませんでした。");
   }
 
   function bindActions(syllabus) {
@@ -1170,24 +1517,16 @@
     }
 
     if (isKSupportConnectionError(response)) {
-      renderStatus(
-        "授業評価",
-        "この授業の公開評価はまだ確認できていません。",
-        {
-          retry: true,
-        },
-      );
+      renderStatus("授業評価", "この授業の公開評価はまだ確認できていません。", {
+        retry: true,
+      });
       return;
     }
 
     if (response?.code === "KSUPPORT_TAB_NOT_FOUND") {
-      renderStatus(
-        "授業評価",
-        "この授業の公開評価はまだ確認できていません。",
-        {
-          retry: true,
-        },
-      );
+      renderStatus("授業評価", "この授業の公開評価はまだ確認できていません。", {
+        retry: true,
+      });
       return;
     }
 
@@ -1196,13 +1535,9 @@
       response?.code === "KSUPPORT_CONTEXT_EXPIRED" ||
       isKSupportAuthError(response)
     ) {
-      renderStatus(
-        "授業評価",
-        "この授業の公開評価を確認できませんでした。",
-        {
-          retry: true,
-        },
-      );
+      renderStatus("授業評価", "この授業の公開評価を確認できませんでした。", {
+        retry: true,
+      });
       return;
     }
 
