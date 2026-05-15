@@ -13,6 +13,8 @@
   const ROOT_ID = "keio-survey-overlay-root";
   const BEAR_ROOT_ID = "keio-survey-bear-root";
   const STYLE_ID = "keio-survey-overlay-style";
+  const KSUPPORT_SEARCH_URL =
+    "https://keiouniversity.my.site.com/students/s/ClassEvaluationSearch";
   const FETCH_TIMEOUT_MS = 45 * 1000;
   const MISS_TTL_MS = 14 * 24 * 60 * 60 * 1000;
   const CHOICE_LABELS = [
@@ -26,6 +28,12 @@
   const CHOICE_COLORS = ["#5681ee", "#9ab3f2", "#f7cca0", "#f9c366", "#f59e0b"];
   const BEAR_FALLBACK_COMMENT =
     "コメント欄は静かめだね。つまり、履修判断まで自力で鍛えてくれるタイプかな。";
+  const KSUPPORT_LOGIN_BEAR_MESSAGE = "アンケート結果を読み込むために、";
+  const KSUPPORT_LOGIN_BEAR_AFTER_LINK =
+    "K-Supportを開いてログインしてね。できたらこのタブに戻って再読み込みしてね。";
+  const TWEET_CHAR_LIMIT = 140;
+  const TWEET_CLICK_THRESHOLD = 3;
+  const TWEET_CLICK_WINDOW_MS = 900;
 
   function readText(selector, root = document) {
     return normalizeText(root.querySelector(selector)?.textContent || "");
@@ -499,6 +507,232 @@
     return pickByHash(candidates, hash);
   }
 
+  function charLength(value) {
+    return Array.from(String(value || "")).length;
+  }
+
+  function tweetHeader(evaluation, mode = "full") {
+    const course = evaluation?.course || {};
+    const courseName = normalizeText(course.courseName) || "授業レビュー";
+    const lecturer = normalizeText(course.lecturer);
+    if (mode === "minimal") return "【口コミ紹介】授業レビュー";
+    if (mode === "course") return `【口コミ紹介】${courseName}`;
+    return `【口コミ紹介】${courseName}${lecturer ? ` (${lecturer})` : ""}`;
+  }
+
+  function ratingStars(evaluation) {
+    const questions = Array.isArray(evaluation?.questions) ? evaluation.questions : [];
+    const overall = questions.find((question) => question.index === 7);
+    if (typeof overall?.avg !== "number") return "";
+    const rounded = Math.max(0, Math.min(5, Math.round(overall.avg)));
+    return `${"★".repeat(rounded)}${"☆".repeat(5 - rounded)}`;
+  }
+
+  function ratingLine(evaluation) {
+    const questions = Array.isArray(evaluation?.questions) ? evaluation.questions : [];
+    const overall = questions.find((question) => question.index === 7);
+    const value =
+      typeof overall?.avg === "number" ? overall.avg.toFixed(1).replace(/\.0$/, "") : "-";
+    return `総合満足度: ★${value}`;
+  }
+
+  function splitExactReviewFragments(comment) {
+    const text = String(comment || "").trim();
+    if (!text) return [];
+    const fragments = [text];
+    const sentences = text.match(/[^。！？!?]+[。！？!?]?/g) || [];
+    fragments.push(...sentences.map((sentence) => sentence.trim()).filter(Boolean));
+    fragments.push(
+      ...text
+        .split(/[、，]/)
+        .map((fragment) => fragment.trim())
+        .filter((fragment) => charLength(fragment) >= 12),
+    );
+    return fragments;
+  }
+
+  function punchlineScore(review) {
+    const text = normalizeText(review);
+    const keywordPatterns = [
+      /イケイケ|バキバキ|地獄|罠|沼|謎|虚無|鬼|無理|しんど|きつ|つら|重い|多い|忙し|大変/,
+      /課題|レポート|宿題|負荷|締切|評価|基準|採点|成績|不明|わかりづら|分かりづら/,
+      /自信はない|上がらない|できない|ない|だけ|とは限らない|わけではない|ほぼ|大部分/,
+      /グループ|班|発表|プレゼン|ディスカッション|温度差|ガチャ/,
+    ];
+    const keywordScore = keywordPatterns.reduce(
+      (score, pattern) => score + (pattern.test(text) ? 16 : 0),
+      0,
+    );
+    const length = charLength(text);
+    const lengthScore = length >= 28 && length <= 72 ? 18 : length >= 14 && length <= 95 ? 8 : 0;
+    const punctuationScore = /[。！？!?]$/.test(text) ? 4 : 0;
+    return keywordScore + lengthScore + punctuationScore;
+  }
+
+  function tweetBearCommentOptions(review, evaluation) {
+    const text = normalizeText(review);
+    const stars = ratingStars(evaluation);
+    const comments = [];
+    if (/英語|語学/.test(text)) {
+      comments.push("英語力は自力発電っぽい。", "英語は別売りっぽい。");
+    }
+    if (/課題|レポート|宿題|負荷|締切|忙し|大変|重い|多い/.test(text)) {
+      comments.push("課題が本体の授業かも。", "生活リズムが収穫されそう。");
+    }
+    if (/シラバス|異な|違う|違っ|違い/.test(text)) {
+      comments.push("シラバスが予告編で本編が別物なの、普通に困るね。");
+      comments.push("契約書と納品物が違うやつ。授業でやるな。");
+    }
+    if (/読み上げ|読むだけ|読んでいるだけ|資料/.test(text)) {
+      comments.push("資料読み上げ会なら、せめて朗読単位って書いといてほしい。");
+      comments.push("授業というより資料の音声化サービスっぽい。");
+    }
+    if (/評価|基準|採点|成績|不明|わかりづら|分かりづら/.test(text)) {
+      comments.push("評価方法がズレるのは、学生の努力を迷子にするやつ。", "採点ルール、霧深め。");
+    }
+    if (/グループ|班|発表|プレゼン|ディスカッション|温度差/.test(text)) {
+      comments.push("メンバーガチャも単位の一部。", "発表筋は鍛えられそう。");
+    }
+    if (stars) comments.push(`なのに満足度は${stars}。何が起きた。`);
+    comments.push("履修登録ボタンが笑ってる。", "静かな沼の気配。", "覚悟だけ先に履修しよ。", "なるほどね。");
+    return [...new Set(comments)].sort((a, b) => charLength(b) - charLength(a));
+  }
+
+  function tweetBearSystemPrompt(maxChars) {
+    return `
+あなたは黄色と白の横ボーダー水着を着た、履修登録に脳を焼かれたしろくまのマスコットです。
+口コミ紹介ツイートに添える「クマのコメント」だけを日本語で返してください。
+条件:
+- ${maxChars}文字以内
+- 1文だけ
+- 皮肉は強め
+- 口コミを書いた学生の不満に同調する
+- 皮肉の矛先は学生ではなく、授業設計・運営・評価方法・シラバスとのズレに向ける
+- でも学生や教員への人格攻撃、差別、容姿いじりはしない
+- 丁寧語・敬語を使わない
+- 「ですね」「でしょう」「ようです」「かもしれません」を使わない
+- 口コミ本文を引用・要約・改変しない
+- 学生を煽る表現を使わない
+- 「勘違いじゃね？」のように口コミを書いた人を疑う言い方をしない
+- 余計な前置きや引用符を付けない
+良い例:
+- シラバスと違う評価方法は、学生の努力を迷子にするやつ。
+- 資料読み上げ会なら、最初から朗読単位って書いといてほしい。
+悪い例:
+- それってただの勘違いじゃね？
+- 期待しすぎちゃった？
+`.trim();
+  }
+
+  function formatTweetBearPrompt(review, evaluation, maxChars) {
+    const rating = ratingLine(evaluation);
+    return `
+クマのコメント上限: ${maxChars}文字
+${rating}
+口コミ:
+${review}
+`.trim();
+  }
+
+  function cleanTweetBearComment(value) {
+    return normalizeText(value)
+      .replace(/^["「『]+|["」』]+$/g, "")
+      .replace(/^クマのコメント[:：]\s*/, "");
+  }
+
+  async function generateTweetBearComment(review, evaluation, maxChars) {
+    const fallback =
+      tweetBearCommentOptions(review, evaluation).find(
+        (comment) => charLength(comment) <= maxChars,
+      ) || "";
+    if (maxChars < 4) return fallback;
+    try {
+      if (typeof window === "undefined" || !("LanguageModel" in window)) {
+        return fallback;
+      }
+      const modelOptions = {
+        expectedInputs: [{ type: "text", languages: ["ja"] }],
+        expectedOutputs: [{ type: "text", languages: ["ja"] }],
+      };
+      const availability =
+        await window.LanguageModel.availability(modelOptions);
+      if (availability === "unavailable") return fallback;
+      let session = null;
+      try {
+        session = await window.LanguageModel.create({
+          ...modelOptions,
+          initialPrompts: [
+            { role: "system", content: tweetBearSystemPrompt(maxChars) },
+          ],
+        });
+        const result = await session.prompt(
+          formatTweetBearPrompt(review, evaluation, maxChars),
+        );
+        const text = cleanTweetBearComment(result);
+        return text && charLength(text) <= maxChars ? text : fallback;
+      } finally {
+        session?.destroy?.();
+      }
+    } catch (error) {
+      console.warn("Syllabus Lens tweet bear comment failed", error);
+      return fallback;
+    }
+  }
+
+  async function composeTweetText(evaluation) {
+    const comments = flattenComments(evaluation?.commentSections);
+    const reviewCandidates = comments
+      .flatMap(splitExactReviewFragments)
+      .map((review, index) => ({ review, index, score: punchlineScore(review) }))
+      .filter((candidate) => candidate.review)
+      .sort((a, b) => b.score - a.score || a.index - b.index);
+    const headerModes = ["full", "course", "minimal"];
+    for (const candidate of reviewCandidates) {
+      for (const headerMode of headerModes) {
+        const header = tweetHeader(evaluation, headerMode);
+        const prefix = `${header}\n${ratingLine(evaluation)}\n${candidate.review}\n\nクマのコメント\n`;
+        const maxCommentLength = TWEET_CHAR_LIMIT - charLength(prefix);
+        if (maxCommentLength < 4) continue;
+        const bearComment = await generateTweetBearComment(
+          candidate.review,
+          evaluation,
+          maxCommentLength,
+        );
+        if (!bearComment) continue;
+        const tweet = `${prefix}${bearComment}`;
+        if (charLength(tweet) <= TWEET_CHAR_LIMIT) return tweet;
+      }
+    }
+    return "";
+  }
+
+  async function openTweetComposer(evaluation) {
+    const tweetText = await composeTweetText(evaluation);
+    if (!tweetText) return;
+    const url = `https://x.com/intent/tweet?text=${encodeURIComponent(tweetText)}`;
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+
+  function bindBearTweetShortcut(root, evaluation) {
+    const stage = root.querySelector("[data-ksso-bear-stage]");
+    if (!stage || !flattenComments(evaluation?.commentSections).length) return;
+    stage.title = "3回クリックで口コミ紹介をツイート";
+    let clickCount = 0;
+    let firstClickAt = 0;
+    stage.addEventListener("click", () => {
+      const now = Date.now();
+      if (now - firstClickAt > TWEET_CLICK_WINDOW_MS) {
+        clickCount = 0;
+        firstClickAt = now;
+      }
+      clickCount += 1;
+      if (clickCount < TWEET_CLICK_THRESHOLD) return;
+      clickCount = 0;
+      firstClickAt = 0;
+      void openTweetComposer(evaluation);
+    });
+  }
+
   function bearSystemPrompt() {
     return `
 あなたは黄色と白の横ボーダー水着を着た、履修登録に脳を焼かれたしろくまのマスコットです。
@@ -636,24 +870,36 @@ ${comments
     document.getElementById(BEAR_ROOT_ID)?.remove();
   }
 
-  function mountBearMascot(evaluation) {
-    const comments = flattenComments(evaluation.commentSections);
+  function mountBearMessage(message, options = {}) {
     removeBearMascot();
     const root = document.createElement("aside");
     root.id = BEAR_ROOT_ID;
     root.setAttribute("aria-label", "クマの授業コメント");
+    const bubbleContent = options.ksupportLink
+      ? `${escapeHtml(message)}<a class="ksso-bear-link" href="${escapeHtml(KSUPPORT_SEARCH_URL)}" target="_blank" rel="noopener noreferrer">ここから</a>${escapeHtml(KSUPPORT_LOGIN_BEAR_AFTER_LINK)}`
+      : escapeHtml(message);
     root.innerHTML = `
       <button type="button" class="ksso-bear-close" aria-label="クマを閉じる">×</button>
-      <div class="ksso-bear-bubble" data-ksso-bear-comment>
-        ${escapeHtml(comments.length ? "みんなどんな感じで授業受けてるのかな..." : buildBearFallbackComment(comments))}
-      </div>
-      <div class="ksso-bear-stage" data-ksso-bear-stage>${renderBearSvg(Boolean(comments.length))}</div>
+      <div class="ksso-bear-bubble" data-ksso-bear-comment>${bubbleContent}</div>
+      <div class="ksso-bear-stage${options.tweet ? " ksso-bear-stage--tweet" : ""}" data-ksso-bear-stage>${renderBearSvg(Boolean(options.thinking))}</div>
     `;
     document.body.appendChild(root);
     root
       .querySelector(".ksso-bear-close")
       ?.addEventListener("click", removeBearMascot);
+    return root;
+  }
+
+  function mountBearMascot(evaluation) {
+    const comments = flattenComments(evaluation.commentSections);
+    const root = mountBearMessage(
+      comments.length
+        ? "みんなどんな感じで授業受けてるのかな..."
+        : buildBearFallbackComment(comments),
+      { thinking: Boolean(comments.length), tweet: Boolean(comments.length) },
+    );
     if (!comments.length) return;
+    bindBearTweetShortcut(root, evaluation);
     void generateBearComment(comments).then((comment) => {
       if (!root.isConnected) return;
       const bubble = root.querySelector("[data-ksso-bear-comment]");
@@ -1299,12 +1545,23 @@ ${comments
         background: #ffffff;
         transform: rotate(45deg);
       }
+      #${BEAR_ROOT_ID} .ksso-bear-link {
+        color: #1d4ed8;
+        font-weight: 900;
+        text-decoration: underline;
+        text-underline-offset: 2px;
+        pointer-events: auto;
+      }
+      #${BEAR_ROOT_ID} .ksso-bear-link:hover {
+        color: #1e40af;
+      }
       #${BEAR_ROOT_ID} .ksso-bear-stage {
         width: 132px;
         height: 162px;
         margin-right: 16px;
         filter: drop-shadow(0 16px 18px rgba(15, 35, 95, 0.16));
-        pointer-events: none;
+        cursor: pointer;
+        pointer-events: auto;
       }
       #${BEAR_ROOT_ID} .ksso-bear-svg {
         display: block;
@@ -1423,7 +1680,14 @@ ${comments
   }
 
   function renderStatus(title, message, options = {}) {
-    removeBearMascot();
+    if (options.bearMessage) {
+      mountBearMessage(options.bearMessage, {
+        thinking: options.bearThinking,
+        ksupportLink: options.bearKSupportLink,
+      });
+    } else {
+      removeBearMascot();
+    }
     const root = mountRoot();
     const actions = [];
     if (options.openKSupport) {
@@ -1448,6 +1712,15 @@ ${comments
 
   function renderNoEvaluationFound() {
     renderStatus("授業評価", "この授業の公開評価は見つかりませんでした。");
+  }
+
+  function renderKSupportLoginNeeded() {
+    renderStatus("授業評価", "K-Support へのログインが必要です。", {
+      openKSupport: true,
+      openKSupportLabel: "K-Supportを開く",
+      bearMessage: KSUPPORT_LOGIN_BEAR_MESSAGE,
+      bearKSupportLink: true,
+    });
   }
 
   function bindActions(syllabus) {
@@ -1485,6 +1758,22 @@ ${comments
     );
   }
 
+  function isKSupportLoginNeeded(response) {
+    const code = response?.code || "";
+    const text = `${code} ${response?.message || ""}`;
+    return (
+      code === "KSUPPORT_TAB_NOT_FOUND" ||
+      code === "KSUPPORT_TABS_UNAVAILABLE" ||
+      code === "TAB_MESSAGE_FAILED" ||
+      code === "KSUPPORT_CONTEXT_MISSING" ||
+      code === "KSUPPORT_CONTEXT_EXPIRED" ||
+      isKSupportAuthError(response) ||
+      /ログイン|Receiving end does not exist|Could not establish connection|Aura token|アクセス権|権限/i.test(
+        text,
+      )
+    );
+  }
+
   async function fetchAndRender(syllabus, existingMatch = null) {
     const missKey = courseFetchKey(syllabus);
     if (!existingMatch) {
@@ -1516,26 +1805,13 @@ ${comments
       return;
     }
 
+    if (isKSupportLoginNeeded(response)) {
+      renderKSupportLoginNeeded();
+      return;
+    }
+
     if (isKSupportConnectionError(response)) {
       renderStatus("授業評価", "この授業の公開評価はまだ確認できていません。", {
-        retry: true,
-      });
-      return;
-    }
-
-    if (response?.code === "KSUPPORT_TAB_NOT_FOUND") {
-      renderStatus("授業評価", "この授業の公開評価はまだ確認できていません。", {
-        retry: true,
-      });
-      return;
-    }
-
-    if (
-      response?.code === "KSUPPORT_CONTEXT_MISSING" ||
-      response?.code === "KSUPPORT_CONTEXT_EXPIRED" ||
-      isKSupportAuthError(response)
-    ) {
-      renderStatus("授業評価", "この授業の公開評価を確認できませんでした。", {
         retry: true,
       });
       return;
