@@ -269,6 +269,42 @@ async function fetchKeioFacultyProfile({ instructorName, faculty }) {
   };
 }
 
+function arrayBufferToBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  for (let index = 0; index < bytes.length; index += 0x8000) {
+    const chunk = bytes.subarray(index, index + 0x8000);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
+}
+
+async function fetchImageDataUrl({ url }) {
+  const imageUrl = normalizeText(url);
+  if (!imageUrl) return { ok: false, code: "IMAGE_URL_MISSING" };
+  const parsed = new URL(imageUrl);
+  if (parsed.protocol !== "https:" || parsed.hostname !== "www.keio.ac.jp") {
+    return { ok: false, code: "IMAGE_URL_NOT_ALLOWED" };
+  }
+  const response = await fetch(parsed.toString(), { credentials: "omit" });
+  if (!response.ok) {
+    return {
+      ok: false,
+      code: "IMAGE_FETCH_FAILED",
+      status: response.status
+    };
+  }
+  const contentType = response.headers.get("content-type") || "image/jpeg";
+  if (!contentType.startsWith("image/")) {
+    return { ok: false, code: "IMAGE_CONTENT_TYPE_UNSUPPORTED" };
+  }
+  const buffer = await response.arrayBuffer();
+  return {
+    ok: true,
+    dataUrl: `data:${contentType};base64,${arrayBufferToBase64(buffer)}`
+  };
+}
+
 async function injectKSupportScripts(tabId) {
   if (!chrome.scripting?.executeScript) {
     return {
@@ -469,6 +505,17 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       .catch((error) => sendResponse({
         ok: false,
         code: "FACULTY_PROFILE_ERROR",
+        message: String(error?.message || error).slice(0, 500)
+      }));
+    return true;
+  }
+
+  if (message?.type === "keioSurvey.fetchImageDataUrl") {
+    fetchImageDataUrl(message)
+      .then(sendResponse)
+      .catch((error) => sendResponse({
+        ok: false,
+        code: "IMAGE_DATA_URL_ERROR",
         message: String(error?.message || error).slice(0, 500)
       }));
     return true;

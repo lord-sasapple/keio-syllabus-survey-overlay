@@ -32,6 +32,8 @@
   const TWEET_CHAR_LIMIT = 140;
   const TWEET_CLICK_THRESHOLD = 3;
   const TWEET_CLICK_WINDOW_MS = 900;
+  const SHARE_IMAGE_WIDTH = 1600;
+  const SHARE_IMAGE_HEIGHT = 900;
 
   function readText(selector, root = document) {
     return normalizeText(root.querySelector(selector)?.textContent || "");
@@ -460,6 +462,180 @@
     return `総合満足度: ★${value}`;
   }
 
+  function overallAverage(evaluation) {
+    const questions = Array.isArray(evaluation?.questions) ? evaluation.questions : [];
+    const overall = questions.find((question) => question.index === 7);
+    return typeof overall?.avg === "number" ? overall.avg : null;
+  }
+
+  function canvasToBlob(canvas) {
+    return new Promise((resolve) => {
+      canvas.toBlob((blob) => resolve(blob), "image/png", 0.92);
+    });
+  }
+
+  function loadImage(src) {
+    return new Promise((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error("Image load failed"));
+      image.src = src;
+    });
+  }
+
+  function roundRectPath(ctx, x, y, width, height, radius) {
+    const r = Math.min(radius, width / 2, height / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + width, y, x + width, y + height, r);
+    ctx.arcTo(x + width, y + height, x, y + height, r);
+    ctx.arcTo(x, y + height, x, y, r);
+    ctx.arcTo(x, y, x + width, y, r);
+    ctx.closePath();
+  }
+
+  function fillRoundRect(ctx, x, y, width, height, radius, fillStyle) {
+    ctx.fillStyle = fillStyle;
+    roundRectPath(ctx, x, y, width, height, radius);
+    ctx.fill();
+  }
+
+  function clipRoundImage(ctx, image, x, y, width, height, radius) {
+    ctx.save();
+    roundRectPath(ctx, x, y, width, height, radius);
+    ctx.clip();
+    const scale = Math.max(width / image.width, height / image.height);
+    const drawWidth = image.width * scale;
+    const drawHeight = image.height * scale;
+    ctx.drawImage(
+      image,
+      x + (width - drawWidth) / 2,
+      y + (height - drawHeight) / 2,
+      drawWidth,
+      drawHeight,
+    );
+    ctx.restore();
+  }
+
+  function drawTextLines(ctx, text, x, y, maxWidth, lineHeight, maxLines) {
+    const words = normalizeText(text).split("");
+    const lines = [];
+    let line = "";
+    for (const char of words) {
+      const next = `${line}${char}`;
+      if (ctx.measureText(next).width > maxWidth && line) {
+        lines.push(line);
+        line = char;
+        if (lines.length >= maxLines) break;
+      } else {
+        line = next;
+      }
+    }
+    if (line && lines.length < maxLines) lines.push(line);
+    lines.forEach((value, index) => ctx.fillText(value, x, y + index * lineHeight));
+    return y + lines.length * lineHeight;
+  }
+
+  function drawFractionalStars(ctx, value, x, y) {
+    const stars = "★★★★★";
+    const rating = Math.max(0, Math.min(5, Number(value) || 0));
+    const metrics = ctx.measureText(stars);
+    const width = metrics.width;
+    const fillWidth = width * (rating / 5);
+    ctx.fillStyle = "#cbd5e1";
+    ctx.fillText(stars, x, y);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x, y - 88, fillWidth, 112);
+    ctx.clip();
+    ctx.fillStyle = "#f59e0b";
+    ctx.fillText(stars, x, y);
+    ctx.restore();
+  }
+
+  async function fetchImageDataUrl(url) {
+    if (!url) return "";
+    const response = await runtimeMessage({
+      type: "keioSurvey.fetchImageDataUrl",
+      url,
+    });
+    return response?.ok ? response.dataUrl || "" : "";
+  }
+
+  async function createTweetShareImageBlob(evaluation, profile) {
+    const avg = overallAverage(evaluation);
+    if (!profile?.imageUrl || typeof avg !== "number") return null;
+    const dataUrl = await fetchImageDataUrl(profile.imageUrl);
+    if (!dataUrl) return null;
+    const photo = await loadImage(dataUrl);
+    const canvas = document.createElement("canvas");
+    canvas.width = SHARE_IMAGE_WIDTH;
+    canvas.height = SHARE_IMAGE_HEIGHT;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+
+    ctx.fillStyle = "#f8fafc";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    fillRoundRect(ctx, 70, 74, 1460, 752, 46, "#ffffff");
+    ctx.strokeStyle = "#d9dee8";
+    ctx.lineWidth = 4;
+    roundRectPath(ctx, 70, 74, 1460, 752, 46);
+    ctx.stroke();
+
+    const course = evaluation?.course || {};
+    const courseName = normalizeText(course.courseName) || "授業レビュー";
+    const lecturer = normalizeText(profile.name || course.lecturer);
+    ctx.fillStyle = "#a84b13";
+    ctx.font = "700 48px -apple-system, BlinkMacSystemFont, 'Hiragino Sans', sans-serif";
+    ctx.fillText("総合満足度", 140, 180);
+    ctx.fillStyle = "#101828";
+    ctx.font = "800 118px -apple-system, BlinkMacSystemFont, 'Hiragino Sans', sans-serif";
+    ctx.fillText(avg.toFixed(1).replace(/\.0$/, ""), 140, 330);
+    ctx.font = "700 76px -apple-system, BlinkMacSystemFont, 'Hiragino Sans', sans-serif";
+    drawFractionalStars(ctx, avg, 430, 316);
+
+    ctx.fillStyle = "#475569";
+    ctx.font = "700 34px -apple-system, BlinkMacSystemFont, 'Hiragino Sans', sans-serif";
+    const total = Array.isArray(evaluation?.questions) && evaluation.questions[0]
+      ? choiceTotal(evaluation.questions[0].counts || [])
+      : null;
+    ctx.fillText(`回答率 ${formatPercent(course.answerPercent)}    回答数 ${typeof total === "number" ? `${total}件` : "-"}`, 144, 402);
+
+    ctx.fillStyle = "#0f172a";
+    ctx.font = "800 54px -apple-system, BlinkMacSystemFont, 'Hiragino Sans', sans-serif";
+    drawTextLines(ctx, courseName, 140, 540, 730, 66, 3);
+
+    const rightX = 890;
+    const rightEdge = 1460;
+    const photoSize = 240;
+    const profileTextX = rightX + photoSize + 44;
+
+    clipRoundImage(ctx, photo, rightX, 190, photoSize, photoSize, 32);
+    ctx.fillStyle = "#64748b";
+    ctx.font = "700 34px -apple-system, BlinkMacSystemFont, 'Hiragino Sans', sans-serif";
+    ctx.fillText("教員プロフィール", profileTextX, 226);
+    ctx.fillStyle = "#172554";
+    ctx.font = "800 54px -apple-system, BlinkMacSystemFont, 'Hiragino Sans', sans-serif";
+    drawTextLines(ctx, lecturer, profileTextX, 304, rightEdge - profileTextX, 62, 2);
+    ctx.fillStyle = "#64748b";
+    ctx.font = "700 30px -apple-system, BlinkMacSystemFont, 'Hiragino Sans', sans-serif";
+    drawTextLines(ctx, profile.affiliations || course.faculty || "", rightX, 510, rightEdge - rightX, 44, 4);
+
+    ctx.fillStyle = "#f59e0b";
+    ctx.font = "800 34px -apple-system, BlinkMacSystemFont, 'Hiragino Sans', sans-serif";
+    const brand = "Syllabus Lens for Keio";
+    ctx.fillText(brand, rightEdge - ctx.measureText(brand).width, 760);
+    return canvasToBlob(canvas);
+  }
+
+  async function copyImageBlobToClipboard(blob) {
+    if (!blob || !navigator.clipboard?.write || typeof ClipboardItem === "undefined") {
+      return false;
+    }
+    await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+    return true;
+  }
+
   function splitExactReviewFragments(comment) {
     const text = String(comment || "").trim();
     if (!text) return [];
@@ -626,11 +802,13 @@ ${review}
     window.open(url, "_blank", "noopener,noreferrer");
   }
 
-  function bindBearTweetShortcut(root, evaluation, tweetTextPromise) {
+  function bindBearTweetShortcut(root, evaluation, tweetTextPromise, shareImagePromise) {
     const stage = root.querySelector("[data-ksso-bear-stage]");
     if (!stage || !flattenComments(evaluation?.commentSections).length) return;
     let preparedTweetText = "";
     let tweetReady = false;
+    let preparedShareImageBlob = null;
+    let shareImageReady = false;
     stage.title = "口コミ紹介ツイートを準備中";
     tweetTextPromise.then((tweetText) => {
       preparedTweetText = tweetText || "";
@@ -640,6 +818,10 @@ ${review}
       } else {
         stage.title = "ツイートできる口コミが見つかりません";
       }
+    });
+    shareImagePromise.then((blob) => {
+      preparedShareImageBlob = blob || null;
+      shareImageReady = true;
     });
     let clickCount = 0;
     let firstClickAt = 0;
@@ -657,7 +839,14 @@ ${review}
       if (clickCount < TWEET_CLICK_THRESHOLD) return;
       clickCount = 0;
       firstClickAt = 0;
-      const pendingWindow = tweetReady ? null : window.open("about:blank", "_blank");
+      const pendingWindow =
+        tweetReady && shareImageReady ? null : window.open("about:blank", "_blank");
+      const imageBlob = shareImageReady ? preparedShareImageBlob : await shareImagePromise;
+      if (imageBlob) {
+        await copyImageBlobToClipboard(imageBlob).catch((error) => {
+          console.warn("Syllabus Lens share image clipboard copy failed", error);
+        });
+      }
       const tweetText = tweetReady ? preparedTweetText : await tweetTextPromise;
       openTweetComposer(tweetText, pendingWindow);
     });
@@ -834,7 +1023,7 @@ ${comments
     return root;
   }
 
-  function mountBearMascot(evaluation) {
+  function mountBearMascot(evaluation, facultyProfilePromise = Promise.resolve(null)) {
     const comments = flattenComments(evaluation.commentSections);
     if (!comments.length) return;
     const root = mountBearMessage("みんなどんな感じで授業受けてるのかな...", {
@@ -845,7 +1034,13 @@ ${comments
       console.warn("Syllabus Lens tweet text preparation failed", error);
       return "";
     });
-    bindBearTweetShortcut(root, evaluation, tweetTextPromise);
+    const shareImagePromise = facultyProfilePromise
+      .then((profile) => createTweetShareImageBlob(evaluation, profile))
+      .catch((error) => {
+        console.warn("Syllabus Lens share image preparation failed", error);
+        return null;
+      });
+    bindBearTweetShortcut(root, evaluation, tweetTextPromise, shareImagePromise);
     void generateBearComment(comments).then((comment) => {
       if (!root.isConnected) return;
       if (!comment) {
@@ -943,19 +1138,20 @@ ${comments
 
   async function hydrateFacultyProfile(root, syllabus, evaluation) {
     const slot = root.querySelector("[data-ksso-faculty-profile]");
-    if (!slot) return;
+    if (!slot) return null;
     const instructorName = primaryInstructorName(
       evaluation.course?.lecturer || syllabus.lecturer,
     );
-    if (!instructorName) return;
+    if (!instructorName) return null;
     const response = await runtimeMessage({
       type: "keioSurvey.fetchFacultyProfile",
       instructorName,
       faculty: evaluation.course?.faculty || syllabus.faculty || "",
     });
-    if (!response?.ok || !response.profile) return;
+    if (!response?.ok || !response.profile) return null;
     slot.innerHTML = renderFacultyProfile(response.profile, instructorName);
     slot.hidden = !slot.innerHTML;
+    return response.profile;
   }
 
   function escapeHtml(value) {
@@ -1615,8 +1811,12 @@ ${comments
     } else {
       anchor.insertAdjacentElement("afterend", root);
     }
-    void hydrateFacultyProfile(root, match.syllabus || {}, evaluation);
-    mountBearMascot(evaluation);
+    const facultyProfilePromise = hydrateFacultyProfile(
+      root,
+      match.syllabus || {},
+      evaluation,
+    );
+    mountBearMascot(evaluation, facultyProfilePromise);
   }
 
   function mountRoot() {
