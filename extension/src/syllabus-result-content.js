@@ -304,6 +304,12 @@
         color: #172554;
         font-family: inherit;
         pointer-events: none;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      #${BEAR_ROOT_ID} * {
+        user-select: none;
+        -webkit-user-select: none;
       }
       #${BEAR_ROOT_ID} .ksso-bear-close {
         position: absolute;
@@ -364,6 +370,8 @@
         text-decoration: underline;
         text-underline-offset: 2px;
         pointer-events: auto;
+        user-select: none;
+        -webkit-user-select: none;
       }
       #${BEAR_ROOT_ID} .ksso-bear-link:hover {
         color: #1e40af;
@@ -461,6 +469,20 @@
     document.getElementById(BEAR_ROOT_ID)?.remove();
   }
 
+  function bindBearSelectionGuard(root) {
+    root.addEventListener("selectstart", (event) => {
+      if (event.target.closest?.(".ksso-bear-link")) return;
+      event.preventDefault();
+    });
+    root.addEventListener("mousedown", (event) => {
+      if (event.target.closest?.(".ksso-bear-link, .ksso-bear-close")) return;
+      event.preventDefault();
+    });
+    root.addEventListener("dragstart", (event) => {
+      event.preventDefault();
+    });
+  }
+
   function mountKSupportLoginBear() {
     if (document.getElementById(BEAR_ROOT_ID)) return;
     ensureStyle();
@@ -475,6 +497,7 @@
       <div class="ksso-bear-stage">${renderBearSvg()}</div>
     `;
     document.body.appendChild(root);
+    bindBearSelectionGuard(root);
     root.querySelector(".ksso-bear-close")?.addEventListener("click", removeBearMascot);
   }
 

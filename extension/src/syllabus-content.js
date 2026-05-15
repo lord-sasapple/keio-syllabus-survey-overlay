@@ -26,8 +26,6 @@
   ];
   // const CHOICE_COLORS = ["#f27b6b", "#f6ba9c", "#c39bfa", "#9abaf7", "#5681ee"];
   const CHOICE_COLORS = ["#5681ee", "#9ab3f2", "#f7cca0", "#f9c366", "#f59e0b"];
-  const BEAR_FALLBACK_COMMENT =
-    "コメント欄は静かめだね。つまり、履修判断まで自力で鍛えてくれるタイプかな。";
   const KSUPPORT_LOGIN_BEAR_MESSAGE = "アンケート結果を読み込むために、";
   const KSUPPORT_LOGIN_BEAR_AFTER_LINK =
     "K-Supportを開いてログインしてね。できたらこのタブに戻って再読み込みしてね。";
@@ -433,80 +431,6 @@
       .filter(Boolean);
   }
 
-  function commentHash(comments) {
-    return comments
-      .join("|")
-      .split("")
-      .reduce((hash, char) => {
-        return (hash * 31 + char.charCodeAt(0)) >>> 0;
-      }, 7);
-  }
-
-  function includesAny(text, patterns) {
-    return patterns.some((pattern) => pattern.test(text));
-  }
-
-  function pickByHash(values, hash) {
-    if (!values.length) return BEAR_FALLBACK_COMMENT;
-    return values[hash % values.length];
-  }
-
-  function buildBearFallbackComment(comments) {
-    if (!comments.length) return BEAR_FALLBACK_COMMENT;
-    const text = normalizeText(comments.join(" "));
-    const hash = commentHash(comments);
-    const candidates = [];
-
-    if (includesAny(text, [/課題|レポート|宿題|負荷|重い|多い|忙し|大変/])) {
-      candidates.push(
-        "授業を取ったつもりが、課題の方から履修してくるタイプっぽいね。",
-        "内容より課題が主役になりそう。睡眠時間、先に退学届を出してるかも。",
-      );
-    }
-    if (
-      includesAny(text, [
-        /評価|基準|採点|成績|ルーブリック|わかりづら|分かりづら|不明/,
-      ])
-    ) {
-      candidates.push(
-        "評価基準が霧なら、努力は遭難するね。コンパス持って履修しよ。",
-        "採点ルールが見えない授業、学生だけ暗闇でダンスさせられがち。",
-      );
-    }
-    if (includesAny(text, [/グループ|班|発表|ディスカッション|議論|温度差/])) {
-      candidates.push(
-        "グループワークは学びもあるけど、メンバーガチャの筐体でもあるね。",
-        "議論できるのは良いね。温度差で風邪ひく準備だけしておこ。",
-      );
-    }
-    if (
-      includesAny(text, [
-        /わかりやす|分かりやす|丁寧|質問|面白|楽しい|よかった|良かった/,
-      ])
-    ) {
-      candidates.push(
-        "先生は当たりっぽいね。あとは締切が人の心を持ってるかだけ。",
-        "評判は良さげ。ただ褒め言葉の裏に課題モンスターが寝てるかも。",
-      );
-    }
-    if (
-      includesAny(text, [/資料|スライド|説明|進行|連絡|遅い|早い|オンライン/])
-    ) {
-      candidates.push(
-        "運営の相性は見とこ。連絡が迷子になる授業、学生も一緒に遭難するから。",
-        "内容の前に進行が勝負っぽいね。授業というより交通整理の才能テスト。",
-      );
-    }
-
-    if (!candidates.length) {
-      candidates.push(
-        "良い点も不安もあるね。履修登録ボタンがちょっと笑って見えるタイプ。",
-        "コメントは静かだけど油断は禁物。静かな沼ほど靴を返してくれない。",
-      );
-    }
-    return pickByHash(candidates, hash);
-  }
-
   function charLength(value) {
     return Array.from(String(value || "")).length;
   }
@@ -569,35 +493,6 @@
     return keywordScore + lengthScore + punctuationScore;
   }
 
-  function tweetBearCommentOptions(review, evaluation) {
-    const text = normalizeText(review);
-    const stars = ratingStars(evaluation);
-    const comments = [];
-    if (/英語|語学/.test(text)) {
-      comments.push("英語力は自力発電っぽい。", "英語は別売りっぽい。");
-    }
-    if (/課題|レポート|宿題|負荷|締切|忙し|大変|重い|多い/.test(text)) {
-      comments.push("課題が本体の授業かも。", "生活リズムが収穫されそう。");
-    }
-    if (/シラバス|異な|違う|違っ|違い/.test(text)) {
-      comments.push("シラバスが予告編で本編が別物なの、普通に困るね。");
-      comments.push("契約書と納品物が違うやつ。授業でやるな。");
-    }
-    if (/読み上げ|読むだけ|読んでいるだけ|資料/.test(text)) {
-      comments.push("資料読み上げ会なら、せめて朗読単位って書いといてほしい。");
-      comments.push("授業というより資料の音声化サービスっぽい。");
-    }
-    if (/評価|基準|採点|成績|不明|わかりづら|分かりづら/.test(text)) {
-      comments.push("評価方法がズレるのは、学生の努力を迷子にするやつ。", "採点ルール、霧深め。");
-    }
-    if (/グループ|班|発表|プレゼン|ディスカッション|温度差/.test(text)) {
-      comments.push("メンバーガチャも単位の一部。", "発表筋は鍛えられそう。");
-    }
-    if (stars) comments.push(`なのに満足度は${stars}。何が起きた。`);
-    comments.push("履修登録ボタンが笑ってる。", "静かな沼の気配。", "覚悟だけ先に履修しよ。", "なるほどね。");
-    return [...new Set(comments)].sort((a, b) => charLength(b) - charLength(a));
-  }
-
   function tweetBearSystemPrompt(maxChars) {
     return `
 あなたは黄色と白の横ボーダー水着を着た、履修登録に脳を焼かれたしろくまのマスコットです。
@@ -640,15 +535,20 @@ ${review}
       .replace(/^クマのコメント[:：]\s*/, "");
   }
 
+  function isValidTweetBearComment(value, maxChars) {
+    const text = cleanTweetBearComment(value);
+    return (
+      Boolean(text) &&
+      charLength(text) <= maxChars &&
+      !/ですね|でしょう|ようです|かもしれません|勘違いじゃね|期待しすぎ/.test(text)
+    );
+  }
+
   async function generateTweetBearComment(review, evaluation, maxChars) {
-    const fallback =
-      tweetBearCommentOptions(review, evaluation).find(
-        (comment) => charLength(comment) <= maxChars,
-      ) || "";
-    if (maxChars < 4) return fallback;
+    if (maxChars < 4) return "";
     try {
       if (typeof window === "undefined" || !("LanguageModel" in window)) {
-        return fallback;
+        return "";
       }
       const modelOptions = {
         expectedInputs: [{ type: "text", languages: ["ja"] }],
@@ -656,7 +556,7 @@ ${review}
       };
       const availability =
         await window.LanguageModel.availability(modelOptions);
-      if (availability === "unavailable") return fallback;
+      if (availability === "unavailable") return "";
       let session = null;
       try {
         session = await window.LanguageModel.create({
@@ -665,17 +565,23 @@ ${review}
             { role: "system", content: tweetBearSystemPrompt(maxChars) },
           ],
         });
-        const result = await session.prompt(
-          formatTweetBearPrompt(review, evaluation, maxChars),
-        );
-        const text = cleanTweetBearComment(result);
-        return text && charLength(text) <= maxChars ? text : fallback;
+        const prompt = formatTweetBearPrompt(review, evaluation, maxChars);
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          const result = await session.prompt(
+            attempt
+              ? `${prompt}\n\n前回の出力は条件違反です。「ですね」「でしょう」などの丁寧語を使わず、指定文字数以内で1文だけ再生成してください。`
+              : prompt,
+          );
+          const text = cleanTweetBearComment(result);
+          if (isValidTweetBearComment(text, maxChars)) return text;
+        }
+        return "";
       } finally {
         session?.destroy?.();
       }
     } catch (error) {
       console.warn("Syllabus Lens tweet bear comment failed", error);
-      return fallback;
+      return "";
     }
   }
 
@@ -706,20 +612,42 @@ ${review}
     return "";
   }
 
-  async function openTweetComposer(evaluation) {
-    const tweetText = await composeTweetText(evaluation);
-    if (!tweetText) return;
+  function openTweetComposer(tweetText, targetWindow = null) {
+    if (!tweetText) {
+      targetWindow?.close?.();
+      return;
+    }
     const url = `https://x.com/intent/tweet?text=${encodeURIComponent(tweetText)}`;
+    if (targetWindow && !targetWindow.closed) {
+      targetWindow.opener = null;
+      targetWindow.location.href = url;
+      return;
+    }
     window.open(url, "_blank", "noopener,noreferrer");
   }
 
-  function bindBearTweetShortcut(root, evaluation) {
+  function bindBearTweetShortcut(root, evaluation, tweetTextPromise) {
     const stage = root.querySelector("[data-ksso-bear-stage]");
     if (!stage || !flattenComments(evaluation?.commentSections).length) return;
-    stage.title = "3回クリックで口コミ紹介をツイート";
+    let preparedTweetText = "";
+    let tweetReady = false;
+    stage.title = "口コミ紹介ツイートを準備中";
+    tweetTextPromise.then((tweetText) => {
+      preparedTweetText = tweetText || "";
+      tweetReady = true;
+      if (preparedTweetText) {
+        stage.title = "3回クリックで口コミ紹介をツイート";
+      } else {
+        stage.title = "ツイートできる口コミが見つかりません";
+      }
+    });
     let clickCount = 0;
     let firstClickAt = 0;
-    stage.addEventListener("click", () => {
+    stage.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+    });
+    stage.addEventListener("click", async (event) => {
+      event.preventDefault();
       const now = Date.now();
       if (now - firstClickAt > TWEET_CLICK_WINDOW_MS) {
         clickCount = 0;
@@ -729,7 +657,9 @@ ${review}
       if (clickCount < TWEET_CLICK_THRESHOLD) return;
       clickCount = 0;
       firstClickAt = 0;
-      void openTweetComposer(evaluation);
+      const pendingWindow = tweetReady ? null : window.open("about:blank", "_blank");
+      const tweetText = tweetReady ? preparedTweetText : await tweetTextPromise;
+      openTweetComposer(tweetText, pendingWindow);
     });
   }
 
@@ -767,14 +697,13 @@ ${comments
   }
 
   async function generateBearComment(comments) {
-    const fallback = buildBearFallbackComment(comments);
     try {
       if (
         !comments.length ||
         typeof window === "undefined" ||
         !("LanguageModel" in window)
       ) {
-        return fallback;
+        return "";
       }
       const modelOptions = {
         expectedInputs: [{ type: "text", languages: ["ja"] }],
@@ -782,7 +711,7 @@ ${comments
       };
       const availability =
         await window.LanguageModel.availability(modelOptions);
-      if (availability === "unavailable") return fallback;
+      if (availability === "unavailable") return "";
       let session = null;
       try {
         session = await window.LanguageModel.create({
@@ -791,13 +720,13 @@ ${comments
         });
         const result = await session.prompt(formatBearPrompt(comments));
         const text = normalizeText(result).replace(/^["「]+|["」]+$/g, "");
-        return text || fallback;
+        return text;
       } finally {
         session?.destroy?.();
       }
     } catch (error) {
       console.warn("Syllabus Lens bear comment failed", error);
-      return fallback;
+      return "";
     }
   }
 
@@ -870,6 +799,20 @@ ${comments
     document.getElementById(BEAR_ROOT_ID)?.remove();
   }
 
+  function bindBearSelectionGuard(root) {
+    root.addEventListener("selectstart", (event) => {
+      if (event.target.closest?.(".ksso-bear-link")) return;
+      event.preventDefault();
+    });
+    root.addEventListener("mousedown", (event) => {
+      if (event.target.closest?.(".ksso-bear-link, .ksso-bear-close")) return;
+      event.preventDefault();
+    });
+    root.addEventListener("dragstart", (event) => {
+      event.preventDefault();
+    });
+  }
+
   function mountBearMessage(message, options = {}) {
     removeBearMascot();
     const root = document.createElement("aside");
@@ -884,6 +827,7 @@ ${comments
       <div class="ksso-bear-stage${options.tweet ? " ksso-bear-stage--tweet" : ""}" data-ksso-bear-stage>${renderBearSvg(Boolean(options.thinking))}</div>
     `;
     document.body.appendChild(root);
+    bindBearSelectionGuard(root);
     root
       .querySelector(".ksso-bear-close")
       ?.addEventListener("click", removeBearMascot);
@@ -892,16 +836,22 @@ ${comments
 
   function mountBearMascot(evaluation) {
     const comments = flattenComments(evaluation.commentSections);
-    const root = mountBearMessage(
-      comments.length
-        ? "みんなどんな感じで授業受けてるのかな..."
-        : buildBearFallbackComment(comments),
-      { thinking: Boolean(comments.length), tweet: Boolean(comments.length) },
-    );
     if (!comments.length) return;
-    bindBearTweetShortcut(root, evaluation);
+    const root = mountBearMessage("みんなどんな感じで授業受けてるのかな...", {
+      thinking: true,
+      tweet: true,
+    });
+    const tweetTextPromise = composeTweetText(evaluation).catch((error) => {
+      console.warn("Syllabus Lens tweet text preparation failed", error);
+      return "";
+    });
+    bindBearTweetShortcut(root, evaluation, tweetTextPromise);
     void generateBearComment(comments).then((comment) => {
       if (!root.isConnected) return;
+      if (!comment) {
+        removeBearMascot();
+        return;
+      }
       const bubble = root.querySelector("[data-ksso-bear-comment]");
       const stage = root.querySelector("[data-ksso-bear-stage]");
       if (bubble) bubble.textContent = comment;
@@ -1490,6 +1440,12 @@ ${comments
         color: #172554;
         font-family: inherit;
         pointer-events: none;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      #${BEAR_ROOT_ID} * {
+        user-select: none;
+        -webkit-user-select: none;
       }
       #${BEAR_ROOT_ID} .ksso-bear-close {
         padding: 0;
@@ -1551,6 +1507,8 @@ ${comments
         text-decoration: underline;
         text-underline-offset: 2px;
         pointer-events: auto;
+        user-select: none;
+        -webkit-user-select: none;
       }
       #${BEAR_ROOT_ID} .ksso-bear-link:hover {
         color: #1e40af;
