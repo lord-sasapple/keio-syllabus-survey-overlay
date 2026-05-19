@@ -433,6 +433,34 @@
       .filter(Boolean);
   }
 
+  function tweetCommentSectionPriority(section) {
+    const text = normalizeText(`${section?.kind || ""} ${section?.title || ""} ${section?.en || ""}`);
+    if (/improvement|改善|より良く|よくする|良くする|ほしい|欲しい|留意|課題|注意/.test(text)) {
+      return 0;
+    }
+    if (/other|その他|自由/.test(text)) return 1;
+    if (/positive|good|良かった|よかった|印象/.test(text)) return 2;
+    return 1;
+  }
+
+  function tweetReviewComments(sections) {
+    return normalizeCommentSections(sections)
+      .flatMap((section, sectionIndex) =>
+        section.comments.map((comment, commentIndex) => ({
+          comment,
+          sectionIndex,
+          commentIndex,
+          priority: tweetCommentSectionPriority(section),
+        })),
+      )
+      .sort(
+        (a, b) =>
+          a.priority - b.priority ||
+          a.sectionIndex - b.sectionIndex ||
+          a.commentIndex - b.commentIndex,
+      );
+  }
+
   function charLength(value) {
     return Array.from(String(value || "")).length;
   }
@@ -651,22 +679,103 @@
     return fragments;
   }
 
-  function punchlineScore(review) {
-    const text = normalizeText(review);
-    const keywordPatterns = [
-      /イケイケ|バキバキ|地獄|罠|沼|謎|虚無|鬼|無理|しんど|きつ|つら|重い|多い|忙し|大変/,
-      /課題|レポート|宿題|負荷|締切|評価|基準|採点|成績|不明|わかりづら|分かりづら/,
-      /自信はない|上がらない|できない|ない|だけ|とは限らない|わけではない|ほぼ|大部分/,
-      /グループ|班|発表|プレゼン|ディスカッション|温度差|ガチャ/,
-    ];
-    const keywordScore = keywordPatterns.reduce(
-      (score, pattern) => score + (pattern.test(text) ? 16 : 0),
-      0,
-    );
-    const length = charLength(text);
-    const lengthScore = length >= 28 && length <= 72 ? 18 : length >= 14 && length <= 95 ? 8 : 0;
-    const punctuationScore = /[。！？!?]$/.test(text) ? 4 : 0;
-    return keywordScore + lengthScore + punctuationScore;
+  function buildTweetReviewCandidates(evaluation) {
+    return tweetReviewComments(evaluation?.commentSections)
+      .flatMap((entry) =>
+        splitExactReviewFragments(entry.comment).map((review, fragmentIndex) => ({
+          review,
+          fragmentIndex,
+          priority: entry.priority,
+          sectionIndex: entry.sectionIndex,
+          commentIndex: entry.commentIndex,
+        })),
+      )
+      .filter((candidate) => candidate.review)
+      .sort(
+        (a, b) =>
+          a.priority - b.priority ||
+          a.sectionIndex - b.sectionIndex ||
+          a.commentIndex - b.commentIndex ||
+          a.fragmentIndex - b.fragmentIndex,
+      )
+      .map((candidate, index) => ({ ...candidate, id: index + 1 }));
+  }
+
+  function tweetReviewSelectorSystemPrompt() {
+    return `
+あなたは授業レビュー紹介ツイートに載せる口コミを選ぶ編集者です。
+候補の中から、授業運営・評価方法・課題・期限・聞こえづらさなど、授業への具体的な改善点や不満が最も伝わる口コミを1つ選んでください。
+条件:
+- 口コミ本文を書き換えない
+- 要約しない
+- コメントを生成しない
+- 返答は候補番号の数字だけ
+- 良かった点だけの口コミより、改善点・困りごと・履修判断に役立つ口コミを優先する
+`.trim();
+  }
+
+  function formatTweetReviewSelectorPrompt(candidates, evaluation) {
+    const course = evaluation?.course || {};
+    return `
+授業名: ${normalizeText(course.courseName) || "授業レビュー"}
+${ratingLine(evaluation)}
+候補:
+${candidates.map((candidate) => `${candidate.id}. ${candidate.review}`).join("\n")}
+`.trim();
+  }
+
+  function parseSelectedCandidateId(value, candidates) {
+    const id = Number(String(value || "").match(/\d+/)?.[0] || 0);
+    return candidates.some((candidate) => candidate.id === id) ? id : 0;
+  }
+
+  async function selectTweetReviewCandidates(candidates, evaluation) {
+    if (!candidates.length) return [];
+    const bestPriority = candidates[0].priority;
+    const primaryCandidates = candidates
+      .filter((candidate) => candidate.priority === bestPriority)
+      .slice(0, 18);
+    try {
+      if (typeof window === "undefined" || !("LanguageModel" in window)) {
+        return candidates;
+      }
+      const modelOptions = {
+        expectedInputs: [{ type: "text", languages: ["ja"] }],
+        expectedOutputs: [{ type: "text", languages: ["ja"] }],
+      };
+      const availability =
+        await window.LanguageModel.availability(modelOptions);
+      if (availability === "unavailable") return candidates;
+      let session = null;
+      try {
+        session = await window.LanguageModel.create({
+          ...modelOptions,
+          initialPrompts: [
+            { role: "system", content: tweetReviewSelectorSystemPrompt() },
+          ],
+        });
+        const result = await session.prompt(
+          formatTweetReviewSelectorPrompt(primaryCandidates, evaluation),
+        );
+        const selectedId = parseSelectedCandidateId(result, primaryCandidates);
+        if (!selectedId) return candidates;
+        return candidates.slice().sort((a, b) => {
+          if (a.id === selectedId) return -1;
+          if (b.id === selectedId) return 1;
+          return (
+            a.priority - b.priority ||
+            a.sectionIndex - b.sectionIndex ||
+            a.commentIndex - b.commentIndex ||
+            a.fragmentIndex - b.fragmentIndex
+          );
+        });
+      } finally {
+        session?.destroy?.();
+      }
+    } catch (error) {
+      console.warn("Syllabus Lens tweet review selection failed", error);
+      return candidates;
+    }
   }
 
   function tweetBearSystemPrompt(maxChars) {
@@ -762,12 +871,10 @@ ${review}
   }
 
   async function composeTweetText(evaluation) {
-    const comments = flattenComments(evaluation?.commentSections);
-    const reviewCandidates = comments
-      .flatMap(splitExactReviewFragments)
-      .map((review, index) => ({ review, index, score: punchlineScore(review) }))
-      .filter((candidate) => candidate.review)
-      .sort((a, b) => b.score - a.score || a.index - b.index);
+    const reviewCandidates = await selectTweetReviewCandidates(
+      buildTweetReviewCandidates(evaluation),
+      evaluation,
+    );
     const headerModes = ["full", "course", "minimal"];
     for (const candidate of reviewCandidates) {
       for (const headerMode of headerModes) {
