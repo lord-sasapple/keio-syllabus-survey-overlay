@@ -13,6 +13,12 @@
   } = window.KeioSurveyShared;
 
   const STYLE_ID = "keio-survey-result-overlay-style";
+  const BEAR_ROOT_ID = "keio-survey-bear-root";
+  const KSUPPORT_SEARCH_URL =
+    "https://keiouniversity.my.site.com/students/s/ClassEvaluationSearch";
+  const KSUPPORT_LOGIN_BEAR_MESSAGE = "アンケート結果を読み込むために、";
+  const KSUPPORT_LOGIN_BEAR_AFTER_LINK =
+    "K-Supportを開いてログインしてね。できたらこのタブに戻って再読み込みしてね。";
   const ITEM_SELECTOR = ".search-result-item";
   const CACHE_REFRESH_MS = 5 * 60 * 1000;
   const MISS_TTL_MS = 14 * 24 * 60 * 60 * 1000;
@@ -287,8 +293,212 @@
         background: #fef2f2;
         color: #991b1b;
       }
+      #${BEAR_ROOT_ID} {
+        position: fixed;
+        right: max(16px, env(safe-area-inset-right));
+        bottom: max(14px, env(safe-area-inset-bottom));
+        z-index: 2147483646;
+        display: grid;
+        justify-items: end;
+        width: min(340px, calc(100vw - 24px));
+        color: #172554;
+        font-family: inherit;
+        pointer-events: none;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      #${BEAR_ROOT_ID} * {
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      #${BEAR_ROOT_ID} .ksso-bear-close {
+        position: absolute;
+        top: 12px;
+        right: 28px;
+        z-index: 2;
+        display: grid;
+        place-items: center;
+        width: 24px;
+        height: 24px;
+        border: 1px solid #f8d67a;
+        border-radius: 999px;
+        background: #ffffff;
+        color: #854d0e;
+        cursor: pointer;
+        font: inherit;
+        font-size: 16px;
+        font-weight: 800;
+        line-height: 1;
+        pointer-events: auto;
+      }
+      #${BEAR_ROOT_ID} .ksso-bear-close:hover,
+      #${BEAR_ROOT_ID} .ksso-bear-close:focus-visible {
+        background: #fffbeb;
+      }
+      #${BEAR_ROOT_ID} .ksso-bear-bubble {
+        position: relative;
+        width: min(300px, calc(100vw - 40px));
+        margin: 0 18px -10px 0;
+        border: 2px solid #f6c453;
+        border-radius: 18px;
+        padding: 13px 38px 13px 15px;
+        background: #ffffff;
+        box-shadow: 0 12px 28px rgba(15, 35, 95, 0.16);
+        font-size: 14px;
+        font-weight: 800;
+        line-height: 1.55;
+        letter-spacing: 0;
+        word-break: break-word;
+        box-sizing: border-box;
+        pointer-events: auto;
+      }
+      #${BEAR_ROOT_ID} .ksso-bear-bubble::after {
+        content: "";
+        position: absolute;
+        right: 54px;
+        bottom: -10px;
+        width: 18px;
+        height: 18px;
+        border-right: 2px solid #f6c453;
+        border-bottom: 2px solid #f6c453;
+        background: #ffffff;
+        transform: rotate(45deg);
+      }
+      #${BEAR_ROOT_ID} .ksso-bear-link {
+        color: #1d4ed8;
+        font-weight: 900;
+        text-decoration: underline;
+        text-underline-offset: 2px;
+        pointer-events: auto;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      #${BEAR_ROOT_ID} .ksso-bear-link:hover {
+        color: #1e40af;
+      }
+      #${BEAR_ROOT_ID} .ksso-bear-stage {
+        width: 132px;
+        height: 162px;
+        margin-right: 16px;
+        filter: drop-shadow(0 16px 18px rgba(15, 35, 95, 0.16));
+        pointer-events: none;
+      }
+      #${BEAR_ROOT_ID} .ksso-bear-svg {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+      @media (max-width: 720px) {
+        #${BEAR_ROOT_ID} {
+          width: min(250px, calc(100vw - 18px));
+        }
+        #${BEAR_ROOT_ID} .ksso-bear-bubble {
+          width: min(220px, calc(100vw - 30px));
+          margin-right: 8px;
+          padding: 10px 34px 10px 12px;
+          font-size: 12px;
+        }
+        #${BEAR_ROOT_ID} .ksso-bear-close {
+          top: 8px;
+          right: 16px;
+        }
+        #${BEAR_ROOT_ID} .ksso-bear-stage {
+          width: 86px;
+          height: 106px;
+          margin-right: 12px;
+        }
+      }
     `;
     document.head.appendChild(style);
+  }
+
+  function renderBearSvg() {
+    return `
+      <svg class="ksso-bear-svg" viewBox="0 0 260 320" role="img" aria-label="Syllabus Lens のクマのマスコット">
+        <defs>
+          <radialGradient id="ksso-result-bear-fur" cx="42%" cy="30%" r="75%">
+            <stop offset="0%" stop-color="#fffaf0" />
+            <stop offset="100%" stop-color="#efe1c9" />
+          </radialGradient>
+          <linearGradient id="ksso-result-bear-stripe" x1="0" x2="1">
+            <stop offset="0%" stop-color="#f7b500" />
+            <stop offset="100%" stop-color="#ffd25a" />
+          </linearGradient>
+          <clipPath id="ksso-result-bear-romper">
+            <path d="M78 174 C82 143 101 126 130 126 C159 126 178 143 182 174 L190 238 C194 269 173 291 145 291 L115 291 C87 291 66 269 70 238Z" />
+          </clipPath>
+        </defs>
+        <ellipse cx="130" cy="302" rx="70" ry="12" fill="#d6c5ad" opacity="0.28" />
+        <path d="M78 174 C82 143 101 126 130 126 C159 126 178 143 182 174 L190 238 C194 269 173 291 145 291 L115 291 C87 291 66 269 70 238Z" fill="url(#ksso-result-bear-fur)" />
+        <g clip-path="url(#ksso-result-bear-romper)">
+          <rect x="66" y="132" width="128" height="160" fill="#fffdf6" />
+          <rect x="66" y="144" width="128" height="20" fill="url(#ksso-result-bear-stripe)" />
+          <rect x="66" y="188" width="128" height="21" fill="url(#ksso-result-bear-stripe)" />
+          <rect x="66" y="232" width="128" height="21" fill="url(#ksso-result-bear-stripe)" />
+          <rect x="66" y="276" width="128" height="19" fill="url(#ksso-result-bear-stripe)" />
+        </g>
+        <path d="M86 154 C105 136 155 136 174 154" fill="none" stroke="#fff7e9" stroke-width="18" stroke-linecap="round" />
+        <path d="M84 164 C105 150 155 150 176 164" fill="none" stroke="#f7b500" stroke-width="7" stroke-linecap="round" />
+        <path d="M73 165 C54 173 45 197 51 222 C57 247 73 258 88 247 C101 237 103 206 94 185 C89 173 81 164 73 165Z" fill="url(#ksso-result-bear-fur)" />
+        <circle cx="58" cy="170" r="8" fill="#fff8ea" opacity="0.8" />
+        <path d="M187 165 C206 173 215 197 209 222 C203 247 187 258 172 247 C159 237 157 206 166 185 C171 173 179 164 187 165Z" fill="url(#ksso-result-bear-fur)" />
+        <circle cx="202" cy="170" r="8" fill="#fff8ea" opacity="0.8" />
+        <ellipse cx="102" cy="286" rx="27" ry="21" fill="url(#ksso-result-bear-fur)" />
+        <path d="M91 287 L91 298" stroke="#9d7d61" stroke-width="3" stroke-linecap="round" opacity="0.65" />
+        <path d="M104 289 L104 300" stroke="#9d7d61" stroke-width="3" stroke-linecap="round" opacity="0.65" />
+        <ellipse cx="158" cy="286" rx="27" ry="21" fill="url(#ksso-result-bear-fur)" />
+        <path d="M150 289 L150 300" stroke="#9d7d61" stroke-width="3" stroke-linecap="round" opacity="0.65" />
+        <path d="M163 287 L163 298" stroke="#9d7d61" stroke-width="3" stroke-linecap="round" opacity="0.65" />
+        <circle cx="82" cy="66" r="29" fill="url(#ksso-result-bear-fur)" />
+        <circle cx="178" cy="66" r="29" fill="url(#ksso-result-bear-fur)" />
+        <circle cx="83" cy="68" r="16" fill="#fff6e8" opacity="0.72" />
+        <circle cx="177" cy="68" r="16" fill="#fff6e8" opacity="0.72" />
+        <circle cx="130" cy="104" r="68" fill="url(#ksso-result-bear-fur)" />
+        <ellipse cx="102" cy="106" rx="8.5" ry="11" fill="#06112e" />
+        <ellipse cx="158" cy="106" rx="8.5" ry="11" fill="#06112e" />
+        <circle cx="105" cy="101" r="2.4" fill="white" opacity="0.95" />
+        <circle cx="161" cy="101" r="2.4" fill="white" opacity="0.95" />
+        <ellipse cx="130" cy="129" rx="18" ry="14" fill="#4b2c20" />
+        <path d="M130 142 L130 154" stroke="#4b2c20" stroke-width="4" stroke-linecap="round" />
+        <path d="M112 153 Q130 164 148 153" fill="none" stroke="#4b2c20" stroke-width="4" stroke-linecap="round" />
+      </svg>
+    `;
+  }
+
+  function removeBearMascot() {
+    document.getElementById(BEAR_ROOT_ID)?.remove();
+  }
+
+  function bindBearSelectionGuard(root) {
+    root.addEventListener("selectstart", (event) => {
+      if (event.target.closest?.(".ksso-bear-link")) return;
+      event.preventDefault();
+    });
+    root.addEventListener("mousedown", (event) => {
+      if (event.target.closest?.(".ksso-bear-link, .ksso-bear-close")) return;
+      event.preventDefault();
+    });
+    root.addEventListener("dragstart", (event) => {
+      event.preventDefault();
+    });
+  }
+
+  function mountKSupportLoginBear() {
+    if (document.getElementById(BEAR_ROOT_ID)) return;
+    ensureStyle();
+    const root = document.createElement("aside");
+    root.id = BEAR_ROOT_ID;
+    root.setAttribute("aria-label", "クマのK-Supportログイン案内");
+    root.innerHTML = `
+      <button type="button" class="ksso-bear-close" aria-label="クマを閉じる">×</button>
+      <div class="ksso-bear-bubble">
+        ${KSUPPORT_LOGIN_BEAR_MESSAGE}<a class="ksso-bear-link" href="${KSUPPORT_SEARCH_URL}" target="_blank" rel="noopener noreferrer">ここから</a>${KSUPPORT_LOGIN_BEAR_AFTER_LINK}
+      </div>
+      <div class="ksso-bear-stage">${renderBearSvg()}</div>
+    `;
+    document.body.appendChild(root);
+    bindBearSelectionGuard(root);
+    root.querySelector(".ksso-bear-close")?.addEventListener("click", removeBearMascot);
   }
 
   function removeExistingBadge(item) {
@@ -448,6 +658,7 @@
 
     if (isKSupportUnavailable(response)) {
       ksupportUnavailable = true;
+      mountKSupportLoginBear();
       insertBadge(
         item,
         renderStatusBadge("ログインが必要", "ksso-result-badge--loading", "K-Support にログインしてから、このページを再読み込みしてください。"),

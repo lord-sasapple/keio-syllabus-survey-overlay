@@ -3,7 +3,7 @@
   "name": "Syllabus Lens for Keio | 授業レビューをシラバスでひと目で確認",
   "version": "0.1.2",
   "description": "慶應義塾大学のシラバス画面に、K-Support の授業評価結果を見やすく表示します。",
-  "permissions": ["storage", "tabs", "scripting"],
+  "permissions": ["storage", "tabs", "scripting", "clipboardWrite"],
   "host_permissions": [
     "https://gslbs.keio.jp/*",
     "https://keiouniversity.my.site.com/*",
